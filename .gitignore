@@ -1,0 +1,10 @@
+**/reverse/
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+.DS_Store
+.ipynb_checkpoints/
+data/processed/
+checkpoints/
+results/
