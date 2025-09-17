@@ -12,6 +12,7 @@ CSV_PATH = Path("/home/tommy/Projects/PcodeBERT/dataset/csv/base_dataset_filtere
 RAW_DATA_PATH = Path("/home/tommy/Projects/PcodeBERT/reverse/results")
 TEMP_DIR = Path("/home/tommy/Projects/PcodeBERT/outputs/preprocessed/temp_files")
 FINAL_CORPUS_PATH = Path("/home/tommy/Projects/PcodeBERT/outputs/preprocessed/pcode_corpus_x86_64.pkl")
+ERROR_LOG_PATH = Path("/home/tommy/Projects/PcodeBERT/outputs/preprocessed/error_log.txt")
 TARGET_CPU = "AMD X86-64"
 
 
@@ -81,8 +82,7 @@ def merge_batches(temp_dir: Path, final_output_path: Path):
 
 if __name__ == "__main__":
 
-    
-    build_batches(CSV_PATH, RAW_DATA_PATH, TEMP_DIR, cpu_to_process=TARGET_CPU)
+    build_batches(CSV_PATH, RAW_DATA_PATH, TEMP_DIR, ERROR_LOG_PATH, cpu_to_process=TARGET_CPU)
     merge_batches(TEMP_DIR, FINAL_CORPUS_PATH)
 
     print(f"\nCleaning up temporary directory: {TEMP_DIR}")

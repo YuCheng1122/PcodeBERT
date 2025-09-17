@@ -1,0 +1,6 @@
+tqdm 
+pandas
+torch 
+transformers 
+datasets 
+accelerate
