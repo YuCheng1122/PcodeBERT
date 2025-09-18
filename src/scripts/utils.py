@@ -110,6 +110,6 @@ def load_corpus_dataset(corpus_path):
     """Load and prepare the training dataset"""
     with open(corpus_path, 'rb') as f:
         data = pickle.load(f)
-        # Convert list of tokens to space-separated strings
         text_data = [" ".join(tokens) for tokens in data]
-    return Dataset.from_dict({"text": text_data})
+        dataset = Dataset.from_dict({"text": text_data})
+    return dataset

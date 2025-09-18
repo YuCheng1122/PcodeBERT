@@ -7,25 +7,23 @@ from transformers import (
     DataCollatorForLanguageModeling
 )
 
-def init_pretrain_components(config, tokenizer, dataset):
-    # Initialize model
-    model = RobertaForMaskedLM(config=config["model_config"])
-    print(f"Model initialized with {model.num_parameters():,} parameters")
+def create_model(config):
+    model = RobertaForMaskedLM(config)
+    print("Model initialized successfully, number of parameters:", sum(p.numel() for p in model.parameters()))
+    return model
 
-    # Setup data collator for masked language modeling
+def init_pretrain_components(config, model, tokenizer, dataset):
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
         mlm=True,
         mlm_probability=config["mlm_probability"]
     )
 
-    # Ensure directories exist
     os.makedirs(config["output_dir"], exist_ok=True)
     os.makedirs(config["checkpoint_dir"], exist_ok=True)
 
-    # Setup training arguments
     training_args = TrainingArguments(
-        output_dir=config["checkpoint_dir"],  # Save checkpoints here
+        output_dir=config["checkpoint_dir"], 
         overwrite_output_dir=True,
         num_train_epochs=config["epochs"],
         per_device_train_batch_size=config["batch_size"],
@@ -44,3 +42,5 @@ def init_pretrain_components(config, tokenizer, dataset):
         data_collator=data_collator,
         train_dataset=dataset,
     )
+    return trainer
+

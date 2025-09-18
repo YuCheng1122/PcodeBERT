@@ -4,3 +4,6 @@ torch
 transformers 
 datasets 
 accelerate
+protobuf 
+tiktoken 
+sentencepiece
