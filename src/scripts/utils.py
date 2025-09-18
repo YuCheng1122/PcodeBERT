@@ -4,6 +4,7 @@ import pickle
 import re
 from pathlib import Path
 from typing import List, Dict, Tuple, Generator, Optional
+from datasets import Dataset
 import pandas as pd
 from tqdm import tqdm
 
@@ -104,3 +105,11 @@ def extract_sentences_from_file(file_name_data: Tuple[str, Dict]) -> List[List[s
     except Exception as e:
         print(f"Error processing file {file_name}: {e}")
     return sentences
+
+def load_corpus_dataset(corpus_path):
+    """Load and prepare the training dataset"""
+    with open(corpus_path, 'rb') as f:
+        data = pickle.load(f)
+        # Convert list of tokens to space-separated strings
+        text_data = [" ".join(tokens) for tokens in data]
+    return Dataset.from_dict({"text": text_data})
