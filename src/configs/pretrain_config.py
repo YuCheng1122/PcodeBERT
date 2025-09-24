@@ -1,18 +1,19 @@
 from transformers import RobertaConfig
 
 def get_pretrain_config():
-    VOCAB_SIZE = 69
+    VOCAB_SIZE = 68
     MAX_LENGTH = 512
-    BASE_PATH = "/home/tommy/Projects/PcodeBERT"
+    BASE_PATH = "/home/tommy/Project/PcodeBERT"
 
     config = {
         # Model configuration
         "model_config": RobertaConfig(
             vocab_size=VOCAB_SIZE,
             max_position_embeddings= MAX_LENGTH+ 2,
-            num_attention_heads=12,
+            num_attention_heads=8,
             num_hidden_layers=6,
             type_vocab_size=1,
+            hidden_size=256,
         ),
         
         # Data paths
