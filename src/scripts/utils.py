@@ -1,5 +1,6 @@
 import json
 from os import name
+import os
 import pickle
 import re
 import torch
@@ -7,8 +8,11 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Generator, Optional
 from datasets import Dataset
 import pandas as pd
-from tqdm import tqdm
+import seaborn as sns
+from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
+import matplotlib.pyplot as plt
 from transformers import get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
+from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau, CosineAnnealingLR
 
 
 #Regex pattern preprocessing
@@ -152,7 +156,7 @@ def get_device():
     return device
 
 
-def create_scheduler(optimizer, num_training_steps, scheduler_type="linear", warmup_ratio=0.1):
+def create_transformer_scheduler(optimizer, num_training_steps, scheduler_type="linear", warmup_ratio=0.1):
     """
     Create a learning rate scheduler
     
@@ -201,3 +205,311 @@ def setup_training_environment():
         torch.backends.cudnn.deterministic = False
     
     return device
+
+
+
+def plot_training_curves(train_losses, val_losses, test_losses, val_accuracies, seed, save_dir="plots"):
+    os.makedirs(save_dir, exist_ok=True)
+    plt.figure(figsize=(8, 6))
+    plt.plot(train_losses, label='Train Loss')
+    plt.plot(val_losses, label='Val Loss')
+    plt.plot(test_losses, label='Test Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Train / Validation / Test Loss')
+    plt.legend()
+    plt.tight_layout()
+    save_path = os.path.join(save_dir, f'loss_curves_{seed}.png')
+    plt.savefig(save_path)
+    plt.close()
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(val_accuracies, label='Val Accuracy', color='blue')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.title('Validation Accuracy')
+    plt.legend()
+    plt.tight_layout()
+    save_path = os.path.join(save_dir, f'val_accuracy_curve_{seed}.png')
+    plt.savefig(save_path)
+    plt.close()
+
+
+def plot_confusion_matrix(cm, labels, filename="confusion_matrix.png"):
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                xticklabels=labels, yticklabels=labels)
+    plt.xlabel('Predicted Label')
+    plt.ylabel('True Label')
+    plt.title('Confusion Matrix')
+    plt.tight_layout()
+    plt.savefig(filename)
+    plt.show()
+
+
+def test_model(model, test_loader, device, label_encoder):
+    """測試模型並生成詳細結果"""
+    model.eval()
+    y_true = []
+    y_pred = []
+    
+    with torch.no_grad():
+        for batch in test_loader:
+            batch = batch.to(device)
+            out = model(batch.x, batch.edge_index, batch.batch)
+            pred = out.argmax(dim=1)
+            y_true.extend(batch.y.cpu().numpy())
+            y_pred.extend(pred.cpu().numpy())
+    
+    # 計算指標
+    accuracy = accuracy_score(y_true, y_pred)
+    f1_micro = f1_score(y_true, y_pred, average='micro')
+    f1_macro = f1_score(y_true, y_pred, average='macro')
+    
+    # 分類報告
+    report = classification_report(y_true, y_pred, target_names=[str(c) for c in label_encoder.classes_])
+    
+    # 混淆矩陣
+    original_labels = label_encoder.inverse_transform(sorted(set(y_true + y_pred)))
+    cm = confusion_matrix(y_true, y_pred, labels=label_encoder.transform(original_labels))
+    
+    # print("LabelEncoder classes:", label_encoder.classes_)
+    # print("y_true labels:", set(label_encoder.inverse_transform(y_true)))
+    # print("y_pred labels:", set(label_encoder.inverse_transform(y_pred)))
+    # print("y_pred counts:", dict(pd.Series(label_encoder.inverse_transform(y_pred)).value_counts()))
+    print("Report:\n", report)
+
+
+    return {
+        'accuracy': accuracy,
+        'f1_micro': f1_micro,
+        'f1_macro': f1_macro,
+        'classification_report': report,
+        'confusion_matrix': cm,
+        'original_labels': original_labels,
+        'y_true': y_true,
+        'y_pred': y_pred
+    }
+
+
+def train_epoch(model, train_loader, optimizer, criterion, device):
+    model.train()
+    total_loss = 0
+    
+    for batch in train_loader:
+        batch = batch.to(device)
+        optimizer.zero_grad()
+        out = model(batch.x, batch.edge_index, batch.batch)
+        loss = criterion(out, batch.y)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item() * batch.num_graphs
+    
+    return total_loss / len(train_loader.dataset)
+
+
+def evaluate(model, data_loader, device):
+    model.eval()
+    correct = 0
+    total_loss = 0
+    criterion = torch.nn.CrossEntropyLoss()
+    
+    with torch.no_grad():
+        for batch in data_loader:
+            batch = batch.to(device)
+            out = model(batch.x, batch.edge_index, batch.batch)
+            loss = criterion(out, batch.y)
+            pred = out.argmax(dim=1)
+            correct += int((pred == batch.y).sum())
+            total_loss += loss.item() * batch.num_graphs
+    
+    accuracy = correct / len(data_loader.dataset)
+    avg_loss = total_loss / len(data_loader.dataset)
+    return accuracy, avg_loss
+
+
+def load_cross_arch_data(csv_path, graph_dir, source_cpus, target_cpus, cache_file, 
+                        val_size=0.2, random_state=42, force_reload=False):
+    """
+    載入跨架構的圖資料
+    
+    Args:
+        csv_path: CSV 檔案路徑 (包含 file_name, CPU, label, family 欄位)
+        graph_dir: 圖資料目錄
+        source_cpus: 訓練用的 CPU 架構列表
+        target_cpus: 測試用的 CPU 架構列表
+        cache_file: 快取檔案路徑
+        val_size: 驗證集比例
+        random_state: 隨機種子
+        force_reload: 是否強制重新載入
+    
+    Returns:
+        tuple: (train_graphs, val_graphs, test_graphs, label_encoder, num_classes)
+    """
+    
+    if force_reload and os.path.exists(cache_file):
+        os.remove(cache_file)
+    
+    # 檢查快取
+    if os.path.exists(cache_file):
+        print(f"載入快取資料: {cache_file}")
+        with open(cache_file, 'rb') as f:
+            cached_data = pickle.load(f)
+        return (cached_data['train_graphs'], 
+               cached_data['val_graphs'],
+               cached_data['test_graphs'], 
+               cached_data['label_encoder'], 
+               cached_data['num_classes'])
+    
+    print("載入 CSV 資料...")
+    df = pd.read_csv(csv_path)
+    
+    # 分離訓練和測試資料
+    train_df = df[df['CPU'].isin(source_cpus)]
+    test_df = df[df['CPU'].isin(target_cpus)]
+    
+    print(f"訓練資料: {len(train_df)} 個樣本 (架構: {source_cpus})")
+    print(f"測試資料: {len(test_df)} 個樣本 (架構: {target_cpus})")
+    
+    # 載入圖資料
+    train_graphs, train_labels = load_graphs_from_df(train_df, graph_dir)
+    test_graphs, test_labels = load_graphs_from_df(test_df, graph_dir)
+    
+    # 分割訓練和驗證資料
+    from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import LabelEncoder
+    
+    train_graphs, val_graphs, train_labels, val_labels = train_test_split(
+        train_graphs, train_labels, test_size=val_size, 
+        stratify=train_labels, random_state=random_state
+    )
+    
+    # 標籤編碼
+    label_encoder = LabelEncoder()
+    label_encoder.fit(train_labels + val_labels + test_labels)
+    
+    encoded_train_labels = label_encoder.transform(train_labels)
+    encoded_val_labels = label_encoder.transform(val_labels)
+    encoded_test_labels = label_encoder.transform(test_labels)
+    
+    num_classes = len(label_encoder.classes_)
+    
+    # 更新圖標籤
+    for i, data in enumerate(train_graphs):
+        data.y = torch.tensor(encoded_train_labels[i], dtype=torch.long)
+        
+    for i, data in enumerate(val_graphs):
+        data.y = torch.tensor(encoded_val_labels[i], dtype=torch.long)
+        
+    for i, data in enumerate(test_graphs):
+        data.y = torch.tensor(encoded_test_labels[i], dtype=torch.long)
+
+    # 快取資料
+    os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+    cache_data = {
+        'train_graphs': train_graphs,
+        'val_graphs': val_graphs,
+        'test_graphs': test_graphs,
+        'label_encoder': label_encoder,
+        'num_classes': num_classes
+    }
+    
+    with open(cache_file, 'wb') as f:
+        pickle.dump(cache_data, f)
+    
+    print(f"資料已快取到: {cache_file}")
+    return train_graphs, val_graphs, test_graphs, label_encoder, num_classes
+
+
+def load_graphs_from_df(df, graph_dir):
+    """從 DataFrame 載入圖資料"""
+    import pickle
+    from torch_geometric.data import Data
+    
+    graphs = []
+    labels = []
+    
+    for _, row in df.iterrows():
+        file_name = row['file_name']
+        prefix = file_name[:2]
+        label = row['label']
+        graph_path = Path(graph_dir) / prefix / f"{file_name}.gpickle"
+
+        if not graph_path.exists():
+            continue
+            
+        # 載入 gpickle 檔案
+        with open(graph_path, 'rb') as f:
+            data = pickle.load(f)
+        
+        node_embeddings = data['node_embeddings']
+        if not node_embeddings:
+            continue
+        
+        # 轉換為張量
+        embeddings = [list(emb) for emb in node_embeddings.values()]
+        x = torch.tensor(embeddings, dtype=torch.float)
+        
+        # 創建序列邊
+        num_nodes = len(embeddings)
+        edge_list = []
+        for i in range(num_nodes - 1):
+            edge_list.extend([[i, i+1], [i+1, i]])
+        
+        if edge_list:
+            edge_index = torch.tensor(edge_list, dtype=torch.long).t()
+        else:
+            edge_index = torch.tensor([[0], [0]], dtype=torch.long)
+        
+        graph_data = Data(x=x, edge_index=edge_index)
+        graphs.append(graph_data)
+        labels.append(label)
+    
+    return graphs, labels
+
+
+def simple_early_stopping(current_val_acc, best_val_acc, patience_counter, patience):
+    """簡單的早停機制"""
+    if current_val_acc > best_val_acc:
+        best_val_acc = current_val_acc
+        patience_counter = 0
+        should_stop = False
+    else:
+        patience_counter += 1
+        should_stop = patience_counter >= patience
+    
+    return best_val_acc, patience_counter, should_stop
+
+
+def create_gnn_scheduler(optimizer, scheduler_type, **kwargs):
+    """
+    Create learning rate scheduler
+    
+    Args:
+        optimizer: PyTorch optimizer
+        scheduler_type: Type of scheduler ("step", "plateau", "cosine")
+        **kwargs: Additional parameters for scheduler
+        
+    Returns:
+        Learning rate scheduler
+    """
+    if scheduler_type == "step":
+        step_size = kwargs.get("step_size", 30)
+        gamma = kwargs.get("gamma", 0.5)
+        return StepLR(optimizer, step_size=step_size, gamma=gamma)
+    
+    elif scheduler_type == "plateau":
+        patience = kwargs.get("patience", 10)
+        factor = kwargs.get("factor", 0.5)
+        min_lr = kwargs.get("min_lr", 1e-6)
+        return ReduceLROnPlateau(optimizer, mode='min', patience=patience, 
+                               factor=factor, min_lr=min_lr)
+    
+    elif scheduler_type == "cosine":
+        T_max = kwargs.get("T_max", 100)
+        eta_min = kwargs.get("eta_min", 1e-6)
+        return CosineAnnealingLR(optimizer, T_max=T_max, eta_min=eta_min)
+    
+    else:
+        raise ValueError(f"Unknown scheduler type: {scheduler_type}")
+   
