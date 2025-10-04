@@ -3,9 +3,9 @@ def get_gnn_config():
     
     config = {
         "source_cpus": ["AMD X86-64"],     
-        "target_cpus": ["ARM-32"],        
+        "target_cpus": ["PowerPC-32"],        
         
-        "csv_path": f"{BASE_PATH}/dataset/csv/base_dataset_filtered.csv",
+        "csv_path": f"{BASE_PATH}/dataset/csv/base_dataset_filtered_v2.csv",
         "graph_dir": f"{BASE_PATH}/outputs/embeddings",
         "cache_file": f"{BASE_PATH}/outputs/cache/gnn_data.pkl",
         "model_output_dir": f"{BASE_PATH}/outputs/models/gnn",
