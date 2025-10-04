@@ -329,7 +329,7 @@ def evaluate(model, data_loader, device):
 
 
 def load_cross_arch_data(csv_path, graph_dir, source_cpus, target_cpus, cache_file, 
-                        val_size=0.2, random_state=42, force_reload=False):
+                        val_size=0.2, random_state=42, force_reload=False, classification=False):
     """
     載入跨架構的圖資料
     
@@ -337,11 +337,12 @@ def load_cross_arch_data(csv_path, graph_dir, source_cpus, target_cpus, cache_fi
         csv_path: CSV 檔案路徑 (包含 file_name, CPU, label, family 欄位)
         graph_dir: 圖資料目錄
         source_cpus: 訓練用的 CPU 架構列表
-        target_cpus: 測試用的 CPU 架構列表
+        target_cpus: 測試用的 CPU 架構列表 (如果為空列表,表示單架構)
         cache_file: 快取檔案路徑
         val_size: 驗證集比例
         random_state: 隨機種子
         force_reload: 是否強制重新載入
+        classification: True 使用 'family' 欄位, False 使用 'label' 欄位
     
     Returns:
         tuple: (train_graphs, val_graphs, test_graphs, label_encoder, num_classes)
@@ -364,27 +365,53 @@ def load_cross_arch_data(csv_path, graph_dir, source_cpus, target_cpus, cache_fi
     print("載入 CSV 資料...")
     df = pd.read_csv(csv_path)
     
-    # 分離訓練和測試資料
-    train_df = df[df['CPU'].isin(source_cpus)]
-    test_df = df[df['CPU'].isin(target_cpus)]
-    
-    print(f"訓練資料: {len(train_df)} 個樣本 (架構: {source_cpus})")
-    print(f"測試資料: {len(test_df)} 個樣本 (架構: {target_cpus})")
-    
-    # 載入圖資料
-    train_graphs, train_labels = load_graphs_from_df(train_df, graph_dir)
-    test_graphs, test_labels = load_graphs_from_df(test_df, graph_dir)
-    
-    # 分割訓練和驗證資料
-    from sklearn.model_selection import train_test_split
-    from sklearn.preprocessing import LabelEncoder
-    
-    train_graphs, val_graphs, train_labels, val_labels = train_test_split(
-        train_graphs, train_labels, test_size=val_size, 
-        stratify=train_labels, random_state=random_state
-    )
+    # 判斷是否為單架構 (target_cpus 為空)
+    if not target_cpus:
+        # 單架構模式: 只使用 source_cpus 的資料
+        all_df = df[df['CPU'].isin(source_cpus)]
+        print(f"單架構模式: {len(all_df)} 個樣本 (架構: {source_cpus})")
+        
+        # 載入圖資料
+        all_graphs, all_labels = load_graphs_from_df(all_df, graph_dir, classification)
+        
+        # 分割訓練、驗證和測試資料
+        from sklearn.model_selection import train_test_split
+        
+        # 先分出測試集 (20%)
+        train_val_graphs, test_graphs, train_val_labels, test_labels = train_test_split(
+            all_graphs, all_labels, test_size=0.2, 
+            stratify=all_labels, random_state=random_state
+        )
+        
+        # 再從剩餘資料中分出驗證集
+        train_graphs, val_graphs, train_labels, val_labels = train_test_split(
+            train_val_graphs, train_val_labels, test_size=val_size/(1-0.2), 
+            stratify=train_val_labels, random_state=random_state
+        )
+        
+    else:
+        # 跨架構模式: 分離訓練和測試資料
+        train_df = df[df['CPU'].isin(source_cpus)]
+        test_df = df[df['CPU'].isin(target_cpus)]
+        
+        print(f"跨架構模式:")
+        print(f"訓練資料: {len(train_df)} 個樣本 (架構: {source_cpus})")
+        print(f"測試資料: {len(test_df)} 個樣本 (架構: {target_cpus})")
+        
+        # 載入圖資料
+        train_graphs, train_labels = load_graphs_from_df(train_df, graph_dir, classification)
+        test_graphs, test_labels = load_graphs_from_df(test_df, graph_dir, classification)
+        
+        # 分割訓練和驗證資料
+        from sklearn.model_selection import train_test_split
+        
+        train_graphs, val_graphs, train_labels, val_labels = train_test_split(
+            train_graphs, train_labels, test_size=val_size, 
+            stratify=train_labels, random_state=random_state
+        )
     
     # 標籤編碼
+    from sklearn.preprocessing import LabelEncoder
     label_encoder = LabelEncoder()
     label_encoder.fit(train_labels + val_labels + test_labels)
     
@@ -421,8 +448,15 @@ def load_cross_arch_data(csv_path, graph_dir, source_cpus, target_cpus, cache_fi
     return train_graphs, val_graphs, test_graphs, label_encoder, num_classes
 
 
-def load_graphs_from_df(df, graph_dir):
-    """從 DataFrame 載入圖資料"""
+def load_graphs_from_df(df, graph_dir, classification=False):
+    """
+    從 DataFrame 載入圖資料
+    
+    Args:
+        df: DataFrame 包含 file_name, label, family 等欄位
+        graph_dir: 圖資料目錄
+        classification: True 使用 'family' 欄位, False 使用 'label' 欄位
+    """
     import pickle
     from torch_geometric.data import Data
     
@@ -432,7 +466,8 @@ def load_graphs_from_df(df, graph_dir):
     for _, row in df.iterrows():
         file_name = row['file_name']
         prefix = file_name[:2]
-        label = row['label']
+        # 根據 classification 參數選擇使用 label 或 family
+        label = row['family'] if classification else row['label']
         graph_path = Path(graph_dir) / prefix / f"{file_name}.gpickle"
 
         if not graph_path.exists():
@@ -512,4 +547,3 @@ def create_gnn_scheduler(optimizer, scheduler_type, **kwargs):
     
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}")
-   

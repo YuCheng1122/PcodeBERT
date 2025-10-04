@@ -34,6 +34,7 @@ def run_experiment(seed, config):
     cache_file = config["cache_file"]
     source_cpus = config["source_cpus"]
     target_cpus = config["target_cpus"]
+    classification = config["classification"]
     batch_size = config["batch_size"]
     hidden_channels = config["hidden_channels"]
     lr = config["learning_rate"]
@@ -49,7 +50,8 @@ def run_experiment(seed, config):
         source_cpus=source_cpus,
         target_cpus=target_cpus,
         cache_file=cache_file,
-        force_reload=False
+        force_reload=False,
+        classification=classification
     )
 
     train_loader = DataLoader(train_graphs, batch_size=batch_size, shuffle=True)
@@ -98,8 +100,15 @@ def main():
     config = get_gnn_config()
     seeds = config["seeds"]
     
+    # 判斷模式
+    mode = "Classification (family)" if config["classification"] else "Detection (label)"
+    arch_mode = "單架構" if not config["target_cpus"] else "跨架構"
+    
+    print(f"模式: {mode}")
+    print(f"架構模式: {arch_mode}")
     print(f"Training Architecture: {config['source_cpus']}")
-    print(f"Testing Architecture: {config['target_cpus']}")
+    if config['target_cpus']:
+        print(f"Testing Architecture: {config['target_cpus']}")
     print(f"Experiment Count: {len(seeds)}")
     print(f"Graph Data Directory: {config['graph_dir']}")
 
@@ -128,9 +137,12 @@ def main():
     print(f"F1-score (micro): {avg_f1_micro:.4f} ± {std_f1_micro:.4f}")
     print(f"F1-score (macro): {avg_f1_macro:.4f} ± {std_f1_macro:.4f}")
 
-    print(f"\nCross-Architecture GNN Training and Testing")
+    mode = "Classification (family)" if config["classification"] else "Detection (label)"
+    arch_mode = "單架構" if not config["target_cpus"] else "跨架構"
+    print(f"\nGNN Training and Testing - {mode} - {arch_mode}")
     print(f"Training Architecture: {config['source_cpus']}")
-    print(f"Testing Architecture: {config['target_cpus']}")
+    if config['target_cpus']:
+        print(f"Testing Architecture: {config['target_cpus']}")
 
 if __name__ == "__main__":
     main()
