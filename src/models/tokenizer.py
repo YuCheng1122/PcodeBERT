@@ -1,4 +1,4 @@
-from tokenizers import Tokenizer, pre_tokenizers, decoders, processors
+from tokenizers import Tokenizer, pre_tokenizers, processors
 from tokenizers.models import WordLevel
 from transformers import PreTrainedTokenizerFast
 import os
@@ -57,24 +57,3 @@ def create_wordlevel_tokenizer(vocab_path, output_path, special_tokens, max_leng
     fast_tokenizer.save_pretrained(tokenizer_dir)
     return fast_tokenizer
 
-def test_tokenizer(tokenizer):
-    """
-    Test tokenizer functionality with example Pcode sequences.
-    """
-    print("\n=== Tokenizer Test ===")
-    
-    # Test normal sequence
-    test_seq = "LOAD", "UNIQUE", "CONST", "REG"
-    encoding = tokenizer.encode_plus(test_seq, padding='max_length', truncation=True)
-    print(f"\nInput: {test_seq}")
-    print(f"Tokens: {encoding.tokens()}")
-    print(f"IDs: {encoding['input_ids']}")
-
-    decoded_string = tokenizer.decode(encoding['input_ids'], skip_special_tokens=True)
-    
-    # Test unknown token handling
-    oov_seq = "LOAD", "UNKNOWN_TOKEN", "CONST"
-    encoding = tokenizer.encode(oov_seq)
-    print(f"\nInput with OOV: {oov_seq}")
-    print(f"Tokens: {tokenizer.convert_ids_to_tokens(encoding)}")
-    print(f"IDs: {encoding}")

@@ -22,7 +22,7 @@ def get_contrastive_config():
         "save_every": 5,        
 
         "output_dir": f"{BASE_PATH}/outputs/adapters",
-        "save_name": "adapter.pth",  
+        "save_name": "adapter.pth",
     }
     
     return config

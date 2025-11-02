@@ -5,8 +5,8 @@ import pickle
 import re
 import torch
 from pathlib import Path
-from typing import List, Dict, Tuple, Generator, Optional
-from datasets import Dataset
+from typing import List, Dict, Tuple, Generator, Optional, Union
+from datasets import Dataset, IterableDataset
 import pandas as pd
 import seaborn as sns
 from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
@@ -115,31 +115,39 @@ def extract_sentences_from_file(file_name_data: Tuple[str, Dict]) -> List[List[s
         print(f"Error processing file {file_name}: {e}")
     return sentences
 
-def load_corpus_dataset(corpus_path):
-    """Load and prepare the training dataset with processed data caching"""
+def load_corpus_dataset(corpus_path: Union[str, Path]) -> Dataset:
     corpus_path = Path(corpus_path)
-    processed_path = corpus_path.parent / f"{corpus_path.stem}_processed.pkl"
-    
-    # Check if processed dataset already exists
+    processed_path = corpus_path.parent / f"{corpus_path.stem}_processed"
     if processed_path.exists():
-        print(f"Loading processed dataset from: {processed_path}")
-        with open(processed_path, 'rb') as f:
-            dataset = pickle.load(f)
-        print(f"Loaded processed dataset: {len(dataset)} samples")
+        print(f"Loading processed dataset from cache: {processed_path}")
+        from datasets import load_from_disk
+        dataset = load_from_disk(str(processed_path))
+        print(f"Loaded processed dataset: {len(dataset)} samples (memory-mapped)")
         return dataset
     
-    # Load and process original data
     print(f"Processing dataset from: {corpus_path}")
-    with open(corpus_path, 'rb') as f:
-        data = pickle.load(f)
-        text_data = [" ".join(tokens) for tokens in data]
-        dataset = Dataset.from_dict({"text": text_data})
+    print("Using generator to avoid loading all data into RAM at once...")
     
-    # Save processed dataset
-    print(f"Saving processed dataset to: {processed_path}")
-    with open(processed_path, 'wb') as f:
-        pickle.dump(dataset, f)
-    print(f"Processed dataset saved: {len(dataset)} samples")
+    def data_generator():
+        with open(corpus_path, 'rb') as f:
+            while True:
+                try:
+                    corpus_batch = pickle.load(f)
+                    if isinstance(corpus_batch, list):
+                        for sentence_tokens in corpus_batch:
+                            if isinstance(sentence_tokens, list):
+                                yield {"text": " ".join(sentence_tokens)}
+                except EOFError:
+                    break
+                except Exception as e:
+                    print(f"Error reading batch: {e}")
+                    break
+    
+    dataset = Dataset.from_generator(data_generator)
+    
+    print(f"Saving processed dataset to cache: {processed_path}")
+    dataset.save_to_disk(str(processed_path))
+    print(f"Dataset cached: {len(dataset)} samples (memory-mapped format)")
     
     return dataset
 
@@ -200,7 +208,6 @@ def setup_training_environment():
     if torch.cuda.is_available():
         torch.cuda.manual_seed(42)
         torch.cuda.manual_seed_all(42)
-        # Enable optimizations for better GPU performance
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
     

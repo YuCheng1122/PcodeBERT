@@ -1,7 +1,7 @@
 from transformers import RobertaConfig
 
 def get_pretrain_config():
-    VOCAB_SIZE = 68
+    VOCAB_SIZE = 75
     MAX_LENGTH = 512
     BASE_PATH = "/home/tommy/Project/PcodeBERT"
 
@@ -17,18 +17,19 @@ def get_pretrain_config():
         ),
         
         # Data paths
-        "vocab_path": f"{BASE_PATH}/outputs/tokenizer/vocab.txt",
-        "corpus_path": f"{BASE_PATH}/outputs/preprocessed/pcode_corpus_x86_64.pkl",
-        "output_dir": f"{BASE_PATH}/outputs/models/pretrain",
-        "tokenizer_output_path": f"{BASE_PATH}/outputs/tokenizer/pcode_tokenizer.json",
+        "vocab_path": f"{BASE_PATH}/outputs/tokenizer_new_data/vocab.txt",
+        "corpus_path": f"{BASE_PATH}/outputs/preprocessed/pcode_corpus_x86_64_new_data.pkl",
+        "output_dir": f"{BASE_PATH}/outputs/models/pretrain_new_200",
+        "tokenizer_output_path": f"{BASE_PATH}/outputs/tokenizer_new_data/pcode_tokenizer.json",
         "checkpoint_dir": f"{BASE_PATH}/checkpoints",
         
         # Training parameters
-        "epochs": 10,
-        "batch_size": 16,
-        "learning_rate": 5e-5,
+        "epochs": 100,
+        "batch_size": 64,
+        "learning_rate": 1e-4,
         "max_length": MAX_LENGTH,
         "vocab_size": VOCAB_SIZE,
+        "save_at_epochs": [25, 50],
         
         # MLM parameters
         "mlm_probability": 0.15,
@@ -43,8 +44,8 @@ def get_pretrain_config():
         },
         
         # Saving parameters
-        "save_steps": 1000,
+        "save_steps": 10000,
         "save_total_limit": 2,
-        "logging_steps": 50
+        "logging_steps": 100
     }
     return config

@@ -12,7 +12,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def load_pretrained_model():
     """載入預訓練的模型和tokenizer"""
-    model_path = "/home/tommy/Project/PcodeBERT/outputs/models/pretrain"
+    model_path = "/home/tommy/Project/PcodeBERT/checkpoints/model_epoch_50"
     
     print(f"Loading model from: {model_path}")
     
@@ -24,39 +24,30 @@ def load_pretrained_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     model.eval()
-    
+    print(f"Model Config: {model.config}")
     print(f"Model loaded successfully on device: {device}")
     return model, tokenizer, device
 
 def get_sentence_embedding(sentence, model, tokenizer, device):
     """對單個sentence生成embedding"""
-    # Tokenize
-    inputs = tokenizer(sentence, return_tensors="pt", truncation=True, padding=True, max_length=512)
+    inputs = tokenizer(sentence, return_tensors="pt", truncation=True, padding=True, max_length=256)
     inputs = {k: v.to(device) for k, v in inputs.items()}
-    
-    # 生成embedding
     with torch.no_grad():
         outputs = model.roberta(**inputs)
-        # 使用[CLS] token的embedding
         embedding = outputs.last_hidden_state[:, 0, :].cpu().numpy()
-    
-    return embedding[0]  # 返回一維array
+    return embedding[0]  
 
 def process_single_graph(graph_path, model, tokenizer, device):
     """處理單個graph檔案"""
     try:
-        # 載入graph資料
         with open(graph_path, 'rb') as f:
             graph = pickle.load(f)
-        
-        # 處理每個節點
         node_embeddings = {}
         node_sentences = {}
         
         for node_id, node_data in graph.nodes(data=True):
             sentence = node_data.get('sentence', '')
             if sentence:
-                # 生成embedding
                 embedding = get_sentence_embedding(sentence, model, tokenizer, device)
                 node_embeddings[node_id] = embedding
                 node_sentences[node_id] = sentence
@@ -74,10 +65,7 @@ def process_single_graph(graph_path, model, tokenizer, device):
         return None
 
 def find_all_gpickle_files(base_path):
-    """找到所有gpickle檔案"""
     gpickle_files = []
-    
-    # 遍歷所有子目錄
     for root, dirs, files in os.walk(base_path):
         for file in files:
             if file.endswith('.gpickle'):
@@ -122,10 +110,6 @@ def batch_process_graphs(base_path, output_base_dir):
             total_nodes += result['num_nodes']
             if embedding_dim == 0:
                 embedding_dim = result['embedding_dim']
-            
-            # print(f"  - Nodes: {result['num_nodes']}")
-            # print(f"  - Embedding dim: {result['embedding_dim']}")
-            # print(f"  - Saved to: {output_path}")
         else:
             failed_count += 1
     
@@ -141,20 +125,14 @@ def batch_process_graphs(base_path, output_base_dir):
     stats_path = os.path.join(output_base_dir, "processing_stats.json")
     with open(stats_path, 'w') as f:
         json.dump(stats, f, indent=2)
-    
-    # print(f"\n=== Processing Complete ===")
-    # print(f"Total files: {stats['total_files']}")
-    # print(f"Successfully processed: {stats['processed_files']}")
-    # print(f"Failed: {stats['failed_files']}")
-    # print(f"Total nodes embedded: {stats['total_nodes']}")
-    # print(f"Embedding dimension: {stats['embedding_dim']}")
+
     print(f"Results saved to: {output_base_dir}")
     print(f"Stats saved to: {stats_path}")
 
 def main():
     # 設定路徑
-    base_path = "/home/tommy/Project/PcodeBERT/outputs/gpickle"
-    output_dir = "/home/tommy/Project/PcodeBERT/outputs/embeddings"
+    base_path = "/home/tommy/Project/PcodeBERT/outputs/gpickle_merged_adjusted_filtered"
+    output_dir = "/home/tommy/Project/PcodeBERT/outputs/gpickle_merged_adjusted_filtered_embeddings"
     
     print(f"Starting batch processing...")
     print(f"Input directory: {base_path}")
@@ -164,4 +142,4 @@ def main():
     batch_process_graphs(base_path, output_dir)
 
 if __name__ == "__main__":
-    main()
+    main() 
