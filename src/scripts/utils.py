@@ -1,4 +1,5 @@
 import json
+import numpy as np
 from os import name
 import os
 import pickle
@@ -9,7 +10,7 @@ from typing import List, Dict, Tuple, Generator, Optional, Union
 from datasets import Dataset, IterableDataset
 import pandas as pd
 import seaborn as sns
-from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
+from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix, roc_auc_score
 import matplotlib.pyplot as plt
 from transformers import get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
 from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau, CosineAnnealingLR
@@ -215,7 +216,7 @@ def setup_training_environment():
 
 
 
-def plot_training_curves(train_losses, val_losses, test_losses, val_accuracies, seed, save_dir="plots"):
+def plot_training_curves(train_losses, val_losses, test_losses, val_accuracies, seed, save_dir="outputs/plots"):
     os.makedirs(save_dir, exist_ok=True)
     plt.figure(figsize=(8, 6))
     plt.plot(train_losses, label='Train Loss')
@@ -242,6 +243,22 @@ def plot_training_curves(train_losses, val_losses, test_losses, val_accuracies, 
     plt.close()
 
 
+def save_experiment_results(results_dict, save_dir="outputs"):
+    os.makedirs(save_dir, exist_ok=True)
+    
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    
+    if 'all_results' in results_dict:
+        results_df = pd.DataFrame(results_dict['all_results'])
+        results_df.to_csv(os.path.join(save_dir, f'results_{timestamp}.csv'), index=False)
+    
+    summary_data = {k: v for k, v in results_dict.items() if k != 'all_results'}
+    with open(os.path.join(save_dir, f'summary_{timestamp}.json'), 'w') as f:
+        json.dump(summary_data, f, indent=2)
+    
+    return timestamp
+
+
 def plot_confusion_matrix(cm, labels, filename="confusion_matrix.png"):
     plt.figure(figsize=(10, 8))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
@@ -259,19 +276,27 @@ def test_model(model, test_loader, device, label_encoder):
     model.eval()
     y_true = []
     y_pred = []
+    y_prob = []
     
     with torch.no_grad():
         for batch in test_loader:
             batch = batch.to(device)
             out = model(batch.x, batch.edge_index, batch.batch)
             pred = out.argmax(dim=1)
+            prob = torch.softmax(out, dim=1)
             y_true.extend(batch.y.cpu().numpy())
             y_pred.extend(pred.cpu().numpy())
+            y_prob.extend(prob.cpu().numpy())
     
-    # 計算指標
     accuracy = accuracy_score(y_true, y_pred)
     f1_micro = f1_score(y_true, y_pred, average='micro')
     f1_macro = f1_score(y_true, y_pred, average='macro')
+    
+    y_prob_array = np.array(y_prob)
+    if len(label_encoder.classes_) == 2:
+        auc_score = roc_auc_score(y_true, y_prob_array[:, 1])
+    else:
+        auc_score = roc_auc_score(y_true, y_prob_array, multi_class='ovr', average='macro')
     
     # 分類報告
     report = classification_report(y_true, y_pred, target_names=[str(c) for c in label_encoder.classes_])
@@ -291,6 +316,7 @@ def test_model(model, test_loader, device, label_encoder):
         'accuracy': accuracy,
         'f1_micro': f1_micro,
         'f1_macro': f1_macro,
+        'auc': auc_score,
         'classification_report': report,
         'confusion_matrix': cm,
         'original_labels': original_labels,
@@ -333,6 +359,25 @@ def evaluate(model, data_loader, device):
     accuracy = correct / len(data_loader.dataset)
     avg_loss = total_loss / len(data_loader.dataset)
     return accuracy, avg_loss
+
+
+def load_test_data_by_arch(csv_path, graph_dir, target_cpus, label_encoder, classification=False):
+    df = pd.read_csv(csv_path)
+    test_graphs_by_arch = {}
+    
+    for cpu in target_cpus:
+        cpu_df = df[df['CPU'] == cpu]
+        print(f"載入 {cpu} 測試資料: {len(cpu_df)} 個樣本")
+        
+        graphs, labels = load_graphs_from_df(cpu_df, graph_dir, classification)
+        
+        encoded_labels = label_encoder.transform(labels)
+        for i, data in enumerate(graphs):
+            data.y = torch.tensor(encoded_labels[i], dtype=torch.long)
+        
+        test_graphs_by_arch[cpu] = graphs
+    
+    return test_graphs_by_arch
 
 
 def load_cross_arch_data(csv_path, graph_dir, source_cpus, target_cpus, cache_file, 
