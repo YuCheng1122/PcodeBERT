@@ -1,5 +1,6 @@
 **/reverse/
 **/document/
+**/Document/
 __pycache__/
 *.pyc
 .vscode/
@@ -11,3 +12,6 @@ checkpoints/
 results/
 outputs/
 *tar.gz
+*.png
+*.csv
+*.json
