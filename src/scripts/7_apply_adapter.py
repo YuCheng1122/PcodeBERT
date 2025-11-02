@@ -2,92 +2,161 @@ import os
 import sys
 import pickle
 import torch
+import json
 import pandas as pd
 from pathlib import Path
 from tqdm import tqdm
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.adapter import create_adapter
+from models.adapter_models import AdapterEmbeddingModel
+from configs.adapter_config import get_adapter_config, get_inference_config
+from adapters import AdapterConfig
 
 
-# 配置
-data_path = "/home/tommy/Project/PcodeBERT/outputs/embeddings"
-output_path = "/home/tommy/Project/PcodeBERT/outputs/embeddings_adapted"
-adapter_path = "/home/tommy/Project/PcodeBERT/outputs/adapters/adapter.pth"
-csv_path = "/home/tommy/Project/PcodeBERT/dataset/csv/base_dataset_filtered_v2.csv"
+def get_files_by_cpu(csv_path, target_cpus):
+    df = pd.read_csv(csv_path)
+    return (df[df['CPU'].isin(target_cpus)] if target_cpus else df)['file_name'].tolist()
 
-# 指定要處理的 CPU 類型
-target_cpus = ["AMD X86-64", "ARM-32"]
 
-# 設定 device
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
+def get_embeddings_batch(sentences, model, device, batch_size=1000):
+    all_embeddings = []
+    
+    for i in range(0, len(sentences), batch_size):
+        batch_sentences = sentences[i:i+batch_size]
+        inputs = model.tokenizer(batch_sentences, return_tensors="pt", truncation=True, 
+                                padding=True, max_length=512)
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        
+        with torch.no_grad():
+            embeddings = model(inputs['input_ids'], inputs['attention_mask'])
+            all_embeddings.append(embeddings.cpu())
+    
+    return torch.cat(all_embeddings, dim=0) if all_embeddings else None
 
-# 讀取 CSV 並篩選符合條件的資料
-print(f"Reading CSV from: {csv_path}")
-df = pd.read_csv(csv_path)
-df_filtered = df[df['CPU'].isin(target_cpus)]
-print(f"Target CPUs: {target_cpus}")
-print(f"Found {len(df_filtered)} files matching target CPUs\n")
 
-# 載入 adapter
-adapter = create_adapter(adapter_type='lstm', input_dim=256, hidden_dim=256)
-adapter.load_state_dict(torch.load(adapter_path, map_location=device))
-adapter.to(device)
-adapter.eval()
-print(f"Adapter loaded from: {adapter_path}\n")
+def process_single_graph(graph_path, model, device, base_path, output_base_path):
+    try:
+        with open(graph_path, 'rb') as f:
+            graph = pickle.load(f)
+        
+        node_ids, sentences = [], []
+        for node_id, node_data in graph.nodes(data=True):
+            sentence = node_data.get('sentence', '')
+            if sentence:
+                node_ids.append(node_id)
+                sentences.append(sentence)
 
-# 處理每個檔案
-processed = 0
-skipped = 0
+        if not sentences:
+            return False, "No sentences in graph"
+        
+        embeddings = get_embeddings_batch(sentences, model, device)
+        if embeddings is None:
+            return False, "Embedding generation failed"
+        
+        embeddings_np = embeddings.numpy()
+        node_embeddings = {node_id: embeddings_np[i] for i, node_id in enumerate(node_ids)}
+        node_sentences = {node_id: sentences[i] for i, node_id in enumerate(node_ids)}
+        
+        result = {
+            'file_path': graph_path,
+            'node_embeddings': node_embeddings,
+            'node_sentences': node_sentences,
+            'num_nodes': len(node_embeddings),
+            'embedding_dim': embeddings_np.shape[1]
+        }
+        
+        rel_path = os.path.relpath(graph_path, base_path)
+        output_path = os.path.join(output_base_path, rel_path)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        with open(output_path, 'wb') as f:
+            pickle.dump(result, f)
+        
+        return True, len(node_embeddings)
+        
+    except Exception as e:
+        return False, str(e)
 
-for _, row in tqdm(df_filtered.iterrows(), total=len(df_filtered), desc="Processing files"):
-    file_name = row['file_name']
-    prefix = file_name[:2]
-    
-    # 構建路徑
-    graph_path = Path(data_path) / prefix / f"{file_name}.gpickle"
-    
-    if not graph_path.exists():
-        skipped += 1
-        continue
-    
-    # 載入 gpickle
-    with open(graph_path, 'rb') as f:
-        data = pickle.load(f)
-    
-    node_embeddings = data.get('node_embeddings', {})
-    if not node_embeddings:
-        skipped += 1
-        continue
-    
-    # 提取 embeddings 並轉換
-    embeddings = [list(emb) for emb in node_embeddings.values()]
-    x = torch.tensor(embeddings, dtype=torch.float32).to(device)
-    
-    # 套用 adapter
-    with torch.inference_mode():
-        adapted_x = adapter(x).cpu().numpy()
-    
-    # 更新 node_embeddings
-    new_node_embeddings = {}
-    for i, node_id in enumerate(node_embeddings.keys()):
-        new_node_embeddings[node_id] = adapted_x[i]
-    
-    data['node_embeddings'] = new_node_embeddings
-    
-    # 保存到輸出目錄
-    output_dir = Path(output_path) / prefix
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = output_dir / f"{file_name}.gpickle"
-    
-    with open(output_file, 'wb') as f:
-        pickle.dump(data, f)
-    
-    processed += 1
 
-print(f"\nDone!")
-print(f"Processed: {processed} files")
-print(f"Skipped: {skipped} files")
-print(f"Output saved to: {output_path}")
+def main():
+    train_config = get_adapter_config()
+    inference_config = get_inference_config()
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"\nAdapter Inference - Device: {device}")
+    
+    file_names = get_files_by_cpu(inference_config["csv_path"], inference_config.get("target_cpus"))
+    print(f"Processing {len(file_names)} files\n")
+    
+    adapter_config = AdapterConfig.load(
+        train_config["adapter_config"],
+        reduction_factor=train_config["reduction_factor"],
+        non_linearity=train_config["non_linearity"],
+        leave_out=train_config["leave_out"]
+    )
+    
+    model = AdapterEmbeddingModel(
+        model_name=train_config["model_name"],
+        adapter_config=adapter_config,
+        adapter_name=train_config["adapter_name"],
+        input_dim=train_config["input_dim"],
+        output_dim=train_config["output_dim"],
+        hidden_dim=train_config["hidden_dim"]
+    ).to(device)
+    
+    model.load_adapter(inference_config["adapter_path"])
+    model.eval()
+    
+    processed, failed, skipped, total_nodes = 0, 0, 0, 0
+    failed_files = []
+    
+    for file_name in tqdm(file_names, desc="Processing"):
+        prefix = file_name[:2]
+        graph_path = Path(inference_config["input_path"]) / prefix / f"{file_name}.gpickle"
+        
+        if not graph_path.exists():
+            skipped += 1
+            continue
+        
+        success, result = process_single_graph(
+            str(graph_path), model, device, 
+            inference_config["input_path"], inference_config["output_path"]
+        )
+        
+        if success:
+            processed += 1
+            total_nodes += result
+        else:
+            failed += 1
+            failed_files.append({'file': file_name, 'reason': result})
+    
+    stats = {
+        'model_name': train_config["model_name"],
+        'adapter_path': inference_config["adapter_path"],
+        'target_cpus': inference_config.get("target_cpus", "All"),
+        'total_files_in_csv': len(file_names),
+        'processed_files': processed,
+        'failed_files': failed,
+        'skipped_files': skipped,
+        'total_nodes': total_nodes,
+        'failed_details': failed_files
+    }
+    
+    output_path = inference_config["output_path"]
+    os.makedirs(output_path, exist_ok=True)
+    stats_path = os.path.join(output_path, "processing_stats.json")
+    
+    with open(stats_path, 'w') as f:
+        json.dump(stats, f, indent=2)
+    
+    print(f"\nProcessed: {processed}/{len(file_names)}, Failed: {failed}, Skipped: {skipped}")
+    print(f"Total nodes: {total_nodes}")
+    print(f"Stats saved to: {stats_path}")
+    
+    if failed_files:
+        print(f"\nFailed files saved in stats JSON")
+
+
+if __name__ == "__main__":
+    main()
