@@ -2,14 +2,14 @@ def get_gnn_config():
     BASE_PATH = "/home/tommy/Project/PcodeBERT"
     
     config = {
-        "classification": True,  
-        "source_cpus": ["AMD X86-64"],     
-        "target_cpus": [],        
-        
-        "csv_path": f"{BASE_PATH}/dataset/csv/base_dataset_filtered.csv",
-        "graph_dir": f"{BASE_PATH}/outputs/embeddings",
-        "cache_file": f"{BASE_PATH}/outputs/cache/gnn_data.pkl",
-        "model_output_dir": f"{BASE_PATH}/outputs/models/gnn",
+        "classification": False,  
+        "source_cpus": ["x86_64"],     
+        "target_cpus": ["ARM"],
+
+        "csv_path": f"{BASE_PATH}/dataset/csv/merged_filtered_final.csv",
+        "graph_dir": f"{BASE_PATH}/outputs/data/GNN/gpickle_merged_adjusted_filtered_adapter",
+        "cache_file": f"{BASE_PATH}/outputs/cache/gnn_data_adapter_100_mse.pkl",
+        "model_output_dir": f"{BASE_PATH}/outputs/models/GNN/gnn_adapter_100_mse",
         
         "batch_size": 32,
         "hidden_channels": 64,

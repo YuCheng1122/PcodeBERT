@@ -10,3 +10,4 @@ sentencepiece
 seaborn
 torch_geometric
 scikit-learn
+adapters
