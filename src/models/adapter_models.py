@@ -6,8 +6,7 @@ import os
 
 
 class AdapterEmbeddingModel(nn.Module):
-    def __init__(self, model_name, adapter_config, adapter_name, 
-                 input_dim=256, output_dim=256, hidden_dim=128):
+    def __init__(self, model_name, adapter_config, adapter_name):
         super().__init__()
         
         self.adapter_name = adapter_name

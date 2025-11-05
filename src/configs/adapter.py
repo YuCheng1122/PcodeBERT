@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-
-def get_adapter_config():
-=======
 # def get_adapter_config():
 #     return {
 #         "model_name": "/home/tommy/Project/PcodeBERT/outputs/model_epoch_100",
@@ -28,4 +24,3 @@ def get_adapter_config():
 #         "triplet_margin": 1.0,
 #         "triplet_p": 2, 
 #     }
->>>>>>> e5b97df8d01a7ccb7cc7c4a72cb333c6cad309ed
