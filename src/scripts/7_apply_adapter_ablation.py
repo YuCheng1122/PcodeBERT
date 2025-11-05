@@ -6,11 +6,11 @@ import json
 import pandas as pd
 from pathlib import Path
 from tqdm import tqdm
+import argparse
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.adapter_models import AdapterEmbeddingModel
-from configs.adapter_config import get_adapter_config, get_inference_config
 from adapters import AdapterConfig
 
 
@@ -80,45 +80,64 @@ def process_single_graph(graph_path, model, device, base_path, output_base_path)
 
 
 def main():
-    train_config = get_adapter_config()
-    inference_config = get_inference_config()
+    parser = argparse.ArgumentParser(description='Apply Adapter Ablation')
+    parser.add_argument('--epoch', type=int, required=True, choices=[10, 20, 30],
+                       help='Adapter checkpoint epoch')
+    parser.add_argument('--loss', type=str, required=True, choices=['mse', 'cosine'],
+                       help='Loss function')
+    parser.add_argument('--layers', type=int, required=True, choices=[6],
+                       help='Number of adapter layers')
+    args = parser.parse_args()
+    
+    model_path = "/home/tommy/Project/PcodeBERT/outputs/models/RoBERTa/model_epoch_25"
+    config_name = f"{args.loss}_{args.layers}layers_epoch{args.epoch}"
+    adapter_path = f"/home/tommy/Project/PcodeBERT/outputs/models/Adapters/ablation/{config_name}"
+    input_path = "/home/tommy/Project/PcodeBERT/outputs/data/GNN/gpickle_merged_adjusted_filtered"
+    output_path = f"/home/tommy/Project/PcodeBERT/outputs/models/Adapters/ablation/embeddings/{config_name}"
+    csv_path = "/home/tommy/Project/PcodeBERT/dataset/csv/merged_adjusted_filtered.csv"
+    target_cpus = ["x86_64", "ARM"]
+    
+    print(f"\nApplying adapter: {config_name}")
+    print(f"Pretrain Model: {model_path} (epoch 25)")
+    print(f"Adapter: {adapter_path}")
+    print(f"Output: {output_path}")
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"\nAdapter Inference - Device: {device}")
     
-    file_names = get_files_by_cpu(inference_config["csv_path"], inference_config.get("target_cpus"))
-    print(f"Processing {len(file_names)} files\n")
+    leave_out = [] if args.layers == 6 else [0, 1, 2, 3]
     
     adapter_config = AdapterConfig.load(
-        train_config["adapter_config"],
-        reduction_factor=train_config["reduction_factor"],
-        non_linearity=train_config["non_linearity"],
-        leave_out=train_config["leave_out"]
+        "pfeiffer",
+        reduction_factor=32,
+        non_linearity="gelu",
+        leave_out=leave_out
     )
     
     model = AdapterEmbeddingModel(
-        model_name=train_config["model_name"],
+        model_name=model_path,
         adapter_config=adapter_config,
-        adapter_name=train_config["adapter_name"],
+        adapter_name="pcode_adapter"
     ).to(device)
     
-    model.load_adapter(inference_config["adapter_path"])
+    model.load_adapter(adapter_path)
     model.eval()
+    
+    file_names = get_files_by_cpu(csv_path, target_cpus)
+    print(f"Processing {len(file_names)} files")
     
     processed, failed, skipped, total_nodes = 0, 0, 0, 0
     failed_files = []
     
     for file_name in tqdm(file_names, desc="Processing"):
         prefix = file_name[:2]
-        graph_path = Path(inference_config["input_path"]) / prefix / f"{file_name}.gpickle"
+        graph_path = Path(input_path) / prefix / f"{file_name}.gpickle"
         
         if not graph_path.exists():
             skipped += 1
             continue
         
         success, result = process_single_graph(
-            str(graph_path), model, device, 
-            inference_config["input_path"], inference_config["output_path"]
+            str(graph_path), model, device, input_path, output_path
         )
         
         if success:
@@ -129,9 +148,12 @@ def main():
             failed_files.append({'file': file_name, 'reason': result})
     
     stats = {
-        'model_name': train_config["model_name"],
-        'adapter_path': inference_config["adapter_path"],
-        'target_cpus': inference_config.get("target_cpus", "All"),
+        'adapter_name': config_name,
+        'pretrain_model_epoch': 25,
+        'adapter_epochs': args.epoch,
+        'loss_function': args.loss,
+        'adapter_layers': args.layers,
+        'target_cpus': target_cpus,
         'total_files_in_csv': len(file_names),
         'processed_files': processed,
         'failed_files': failed,
@@ -140,19 +162,15 @@ def main():
         'failed_details': failed_files
     }
     
-    output_path = inference_config["output_path"]
     os.makedirs(output_path, exist_ok=True)
     stats_path = os.path.join(output_path, "processing_stats.json")
     
     with open(stats_path, 'w') as f:
         json.dump(stats, f, indent=2)
     
-    print(f"\nProcessed: {processed}/{len(file_names)}, Failed: {failed}, Skipped: {skipped}")
+    print(f"Processed: {processed}/{len(file_names)}, Failed: {failed}, Skipped: {skipped}")
     print(f"Total nodes: {total_nodes}")
-    print(f"Stats saved to: {stats_path}")
-    
-    if failed_files:
-        print(f"\nFailed files saved in stats JSON")
+    print(f"Stats: {stats_path}\n")
 
 
 if __name__ == "__main__":

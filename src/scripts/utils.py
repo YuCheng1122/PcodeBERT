@@ -10,7 +10,7 @@ from typing import List, Dict, Tuple, Generator, Optional, Union
 from datasets import Dataset, IterableDataset
 import pandas as pd
 import seaborn as sns
-from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix, roc_auc_score
+from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix, roc_auc_score, precision_score, recall_score
 import matplotlib.pyplot as plt
 from transformers import get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
 from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau, CosineAnnealingLR
@@ -292,6 +292,10 @@ def test_model(model, test_loader, device, label_encoder):
     f1_micro = f1_score(y_true, y_pred, average='micro')
     f1_macro = f1_score(y_true, y_pred, average='macro')
     
+    # Calculate precision and recall
+    precision = precision_score(y_true, y_pred, average='macro', zero_division=0)
+    recall = recall_score(y_true, y_pred, average='macro', zero_division=0)
+    
     y_prob_array = np.array(y_prob)
     if len(label_encoder.classes_) == 2:
         auc_score = roc_auc_score(y_true, y_prob_array[:, 1])
@@ -317,6 +321,8 @@ def test_model(model, test_loader, device, label_encoder):
         'f1_micro': f1_micro,
         'f1_macro': f1_macro,
         'auc': auc_score,
+        'precision': precision,
+        'recall': recall,
         'classification_report': report,
         'confusion_matrix': cm,
         'original_labels': original_labels,

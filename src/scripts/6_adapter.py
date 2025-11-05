@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, random_split
-from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
+from transformers import get_linear_schedule_with_warmup
 import pickle
 from adapters import AdapterConfig
 from tqdm import tqdm
@@ -37,33 +37,7 @@ def collate_fn(batch, tokenizer, max_length=512):
     return inputs1, inputs2, labels
 
 
-def get_loss_fn(loss_type, config):
-    if loss_type == "mse":
-        return nn.MSELoss()
-    elif loss_type == "cosine":
-        return nn.CosineEmbeddingLoss()
-    elif loss_type == "triplet":
-        return nn.TripletMarginLoss(margin=config["triplet_margin"], p=config["triplet_p"])
-    raise ValueError(f"Unknown loss: {loss_type}")
-
-
-def compute_loss(loss_type, criterion, emb1, emb2, device):
-    if loss_type == "mse":
-        return criterion(emb1, emb2)
-    elif loss_type == "cosine":
-        return criterion(emb1, emb2, torch.ones(emb1.size(0), device=device))
-    elif loss_type == "triplet":
-        batch_size = emb1.size(0)
-        if batch_size < 2:
-            return torch.tensor(0.0, device=device, requires_grad=True)
-        neg_idx = torch.randperm(batch_size, device=device)
-        neg_idx = torch.where(neg_idx == torch.arange(batch_size, device=device), 
-                             (neg_idx + 1) % batch_size, neg_idx)
-        return criterion(emb1, emb2, emb2[neg_idx])
-    raise ValueError(f"Unknown loss: {loss_type}")
-
-
-def train_epoch(model, dataloader, optimizer, criterion, loss_type, device):
+def train_epoch(model, dataloader, optimizer, scheduler, criterion, device):
     model.train()
     total_loss, batch_count = 0, 0
     
@@ -73,19 +47,20 @@ def train_epoch(model, dataloader, optimizer, criterion, loss_type, device):
         
         emb1 = model(inputs1['input_ids'], inputs1['attention_mask'])
         emb2 = model(inputs2['input_ids'], inputs2['attention_mask'])
-        loss = compute_loss(loss_type, criterion, emb1, emb2, device)
+        loss = criterion(emb1, emb2)
         
-        if loss.item() > 0:
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-            batch_count += 1
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+        
+        total_loss += loss.item()
+        batch_count += 1
     
     return total_loss / batch_count if batch_count > 0 else 0
 
 
-def validate(model, dataloader, criterion, loss_type, device):
+def validate(model, dataloader, criterion, device):
     model.eval()
     total_loss, batch_count = 0, 0
     
@@ -96,50 +71,32 @@ def validate(model, dataloader, criterion, loss_type, device):
             
             emb1 = model(inputs1['input_ids'], inputs1['attention_mask'])
             emb2 = model(inputs2['input_ids'], inputs2['attention_mask'])
-            loss = compute_loss(loss_type, criterion, emb1, emb2, device)
+            loss = criterion(emb1, emb2)
             
-            if loss.item() > 0:
-                total_loss += loss.item()
-                batch_count += 1
+            total_loss += loss.item()
+            batch_count += 1
     
     return total_loss / batch_count if batch_count > 0 else 0
 
 
-def train_with_loss(loss_type, config):
-    print(f"\n{'='*60}\nTraining with {loss_type.upper()} Loss\n{'='*60}")
-    
+def train_adapter(config):
     device = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
     
     adapter_config = AdapterConfig.load(
         config["adapter_config"],
         reduction_factor=config["reduction_factor"],
-        non_linearity=config["non_linearity"],
-        leave_out=config["leave_out"]
+        non_linearity=config["non_linearity"]
     )
-    
-    print(f"Adapter Config: {adapter_config}")
     
     model = AdapterEmbeddingModel(
         model_name=config["model_name"],
         adapter_config=adapter_config,
-        adapter_name=config["adapter_name"],
-        input_dim=config["input_dim"],
-        output_dim=config["output_dim"],
-        hidden_dim=config["hidden_dim"]
+        adapter_name=config["adapter_name"]
     ).to(device)
     
-    optimizer = optim.AdamW(
-        [p for p in model.parameters() if p.requires_grad],
-        lr=config["learning_rate"],
-        weight_decay=config["weight_decay"]
-    )
-    
-    criterion = get_loss_fn(loss_type, config)
-    
-    scheduler = (CosineAnnealingLR(optimizer, T_max=config["epochs"]) 
-                if config["scheduler_type"] == "cosine" 
-                else ReduceLROnPlateau(optimizer, mode='min', factor=config["scheduler_factor"], 
-                                      patience=config["scheduler_patience"]))
+    model_name = os.path.basename(config["model_name"])
+    save_dir = os.path.join(config["save_base_dir"], model_name)
+    os.makedirs(save_dir, exist_ok=True)
     
     dataset = TextPairDataset(config["data_path"])
     val_size = int(len(dataset) * config["val_split"])
@@ -150,47 +107,49 @@ def train_with_loss(loss_type, config):
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False,
                           collate_fn=lambda b: collate_fn(b, model.tokenizer, config["max_length"]))
     
-    best_val_loss = float('inf')
-    patience_counter = 0
-    save_path = os.path.join(config["save_dir"], f"{config['save_model_name']}_{loss_type}")
+    optimizer = optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad],
+        lr=config["learning_rate"],
+        weight_decay=config["weight_decay"]
+    )
+    
+    steps_per_epoch = len(train_loader)
+    num_training_steps = steps_per_epoch * config["epochs"]
+    num_warmup_steps = int(num_training_steps * config["warmup_ratio"])
+    
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=num_training_steps
+    )
+    
+    criterion = nn.MSELoss()
+    
+    log_file = os.path.join(save_dir, "training_log.txt")
+    with open(log_file, "w") as f:
+        f.write("epoch,train_loss,val_loss\n")
+    
+    checkpoint_epochs = [10, 20, 30]
     
     for epoch in tqdm(range(config["epochs"]), desc="Epochs"):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, loss_type, device)
-        val_loss = validate(model, val_loader, criterion, loss_type, device)
+        train_loss = train_epoch(model, train_loader, optimizer, scheduler, criterion, device)
+        val_loss = validate(model, val_loader, criterion, device)
         
-        if config["scheduler_type"] == "cosine":
-            scheduler.step()
-        else:
-            scheduler.step(val_loss)
+        print(f"Epoch {epoch+1}: train_loss={train_loss:.4f}, val_loss={val_loss:.4f}")
         
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            patience_counter = 0
-            model.save_adapter(save_path)
-            print(f"Epoch {epoch+1}: val_loss={val_loss:.4f} (saved)")
-        else:
-            patience_counter += 1
-            if patience_counter >= config.get("early_stop_patience", 10):
-                print(f"Early stopping at epoch {epoch+1}")
-                break
-    
-    print(f"Best val loss: {best_val_loss:.4f}\n")
+        with open(log_file, "a") as f:
+            f.write(f"{epoch+1},{train_loss:.6f},{val_loss:.6f}\n")
+        
+        if (epoch + 1) in checkpoint_epochs:
+            checkpoint_dir = os.path.join(save_dir, f"epoch_{epoch+1}")
+            model.save_adapter(checkpoint_dir)
+            print(f"Saved checkpoint at epoch {epoch+1}")
 
 
 def main():
     config = get_adapter_config()
     torch.manual_seed(config["seed"])
-    os.makedirs(config["save_dir"], exist_ok=True)
-    
-    print(f"Starting Adapter Training\nModel: {config['model_name']}\nLoss: {', '.join(config['loss_functions'])}")
-    
-    for loss_type in config["loss_functions"]:
-        try:
-            train_with_loss(loss_type, config)
-        except Exception as e:
-            print(f"Error with {loss_type}: {str(e)}")
-            continue
-    
+    train_adapter(config)
     print("Training completed!")
 
 
