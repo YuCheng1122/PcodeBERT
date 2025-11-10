@@ -6,7 +6,7 @@ BASE_DIR="/home/tommy/Project/PcodeBERT"
 cd "$BASE_DIR"
 
 LOSSES=("cosine" "mse")
-EPOCHS=(1 2 3 4 5 6 7 8 9 10)
+EPOCHS=(1 2 3 4 5 6 7 8)
 
 LOG_DIR="outputs/logs"
 mkdir -p "$LOG_DIR"
@@ -27,43 +27,6 @@ log "Total Configurations: 20 (10 epochs × 2 losses)"
 log "Random Seeds: 5 (42, 123, 2025, 31415, 8888)"
 log "Log: $LOG_FILE"
 log ""
-
-log "======================================"
-log "Step 1: Training Adapters"
-log "======================================"
-
-python src/scripts/6_adapter_ablation.py 2>&1 | tee -a "$LOG_FILE"
-
-if [ $? -eq 0 ]; then
-    log "✓ All adapter training completed"
-else
-    log "✗ Adapter training failed"
-    exit 1
-fi
-
-log ""
-log "======================================"
-log "Step 2: Generating Embeddings"
-log "======================================"
-
-for epoch in "${EPOCHS[@]}"; do
-    for loss in "${LOSSES[@]}"; do
-        log ""
-        log "Generating embeddings: epoch=$epoch, loss=$loss"
-        
-        python src/scripts/7_apply_adapter_ablation.py \
-            --epoch $epoch \
-            --loss $loss 2>&1 | tee -a "$LOG_FILE"
-        
-        if [ $? -eq 0 ]; then
-            log "✓ Completed embedding generation for ${loss}_epoch${epoch}"
-        else
-            log "✗ Embedding generation failed for ${loss}_epoch${epoch}"
-            exit 1
-        fi
-    done
-done
-
 log ""
 log "======================================"
 log "Step 3: Training GNN Models"

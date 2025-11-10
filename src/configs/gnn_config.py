@@ -7,9 +7,9 @@ def get_gnn_config():
         "target_cpus": ["ARM"],
 
         "csv_path": f"{BASE_PATH}/dataset/csv/merged_adjusted_filtered.csv",
-        "graph_dir": f"{BASE_PATH}/outputs/models/GNN/embeddings_mse_6layers_epoch10",
-        "cache_file": f"{BASE_PATH}/outputs/cache/embeddings_mse_6layers_epoch10.pkl",
-        "model_output_dir": f"{BASE_PATH}/outputs/models/GNN/model_mse_6layers_epoch10",
+        "graph_dir": f"{BASE_PATH}/outputs/data/GNN/gpickle_merged_adjusted_filtered_cosine_epoch5",
+        "cache_file": f"{BASE_PATH}/outputs/cache/embeddings_gpickle_merged_adjusted_filtered_cosine_epoch5.pkl",
+        "model_output_dir": f"{BASE_PATH}/outputs/models/GNN/model_epoch_5_cosine",
         
         "batch_size": 32,
         "hidden_channels": 128,

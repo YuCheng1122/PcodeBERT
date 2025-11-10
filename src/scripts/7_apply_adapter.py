@@ -54,6 +54,12 @@ def process_single_graph(graph_path, model, device, base_path, output_base_path)
         if embeddings is None:
             return False, "Embedding generation failed"
         
+        # print(f"\nEmbedding stats:")
+        # print(f"  Mean: {embeddings.mean().item():.6f}")
+        # print(f"  Std: {embeddings.std().item():.6f}")
+        # print(f"  Min: {embeddings.min().item():.6f}")
+        # print(f"  Max: {embeddings.max().item():.6f}")
+        
         embeddings_np = embeddings.numpy()
         node_embeddings = {node_id: embeddings_np[i] for i, node_id in enumerate(node_ids)}
         node_sentences = {node_id: sentences[i] for i, node_id in enumerate(node_ids)}
@@ -92,8 +98,7 @@ def main():
     adapter_config = AdapterConfig.load(
         train_config["adapter_config"],
         reduction_factor=train_config["reduction_factor"],
-        non_linearity=train_config["non_linearity"],
-        leave_out=train_config["leave_out"]
+        non_linearity=train_config["non_linearity"]
     )
     
     model = AdapterEmbeddingModel(
@@ -104,6 +109,8 @@ def main():
     
     model.load_adapter(inference_config["adapter_path"])
     model.eval()
+    print(f"Active adapters: {model.model.active_adapters}")
+    print(f"Available adapters: {list(model.model.adapters_config.adapters.keys())}")
     
     processed, failed, skipped, total_nodes = 0, 0, 0, 0
     failed_files = []
