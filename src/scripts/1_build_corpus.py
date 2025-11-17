@@ -34,7 +34,19 @@ def build_batches(csv_path: Path, root_dir: Path, temp_output_dir: Path, error_l
 
     print("--- Stage 1: Building Batches ---")
     file_iterator = iterate_json_files(csv_path, root_dir, error_log_path, cpu_filter=cpu_to_process)
-
+    
+    # 先取得第一個檔案並顯示範例
+    first_file = next(file_iterator)
+    example_sequences = extract_sentences_from_file_BERT(first_file)
+    
+    print("\n=== 資料格式範例 ===")
+    if example_sequences:
+        print(f"總資料筆數: {len(example_sequences)}")
+        print("\n前三筆資料範例:")
+        for i, seq in enumerate(example_sequences[:3]):
+            print(f"\n第 {i+1} 筆:")
+            print(seq)
+    
     print("\n=== Starting Batch Processing ===")
     
     def task_generator():
@@ -45,6 +57,10 @@ def build_batches(csv_path: Path, root_dir: Path, temp_output_dir: Path, error_l
     file_names_for_count = read_filenames_from_csv(csv_path, cpu_filter=cpu_to_process)
     total_files = len(file_names_for_count)
     del file_names_for_count
+
+    if total_files == 0:
+        print("No files found for the specified CPU. Exiting.")
+        return
 
     print(f"Found {total_files} files to process. Using {cpu_count()} CPU cores.")
 

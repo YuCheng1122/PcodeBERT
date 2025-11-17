@@ -33,6 +33,8 @@ def init_pretrain_components(config, model, tokenizer, dataset):
         logging_dir=f'{config["checkpoint_dir"]}/logs',
         logging_steps=config["logging_steps"],
         prediction_loss_only=True,
+        lr_scheduler_type="linear", 
+        warmup_steps=10000,
     )
 
     # Initialize trainer
@@ -43,4 +45,3 @@ def init_pretrain_components(config, model, tokenizer, dataset):
         train_dataset=dataset,
     )
     return trainer
-

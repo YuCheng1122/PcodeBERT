@@ -7,14 +7,14 @@ from transformers import RobertaForMaskedLM, AutoTokenizer
 import glob
 from tqdm import tqdm
 import json
+import argparse
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-
-def load_pretrained_model():
+def load_pretrained_model(model_epoch):
     """載入預訓練的模型和tokenizer"""
-    model_path = "/home/tommy/Project/PcodeBERT/outputs/models/RoBERTa/model_epoch_25"
+    model_path = f"/home/tommy/Project/PcodeBERT/outputs/models/RoBERTa/model_epoch_{model_epoch}"
     
     print(f"Loading model from: {model_path}")
     
@@ -30,7 +30,7 @@ def load_pretrained_model():
     print(f"Model loaded successfully on device: {device}")
     return model, tokenizer, device
 
-def get_embeddings_batch(sentences, model, tokenizer, device, batch_size=1000):
+def get_embeddings_batch(sentences, model, tokenizer, device, batch_size=32):
     all_embeddings = []
     
     for i in range(0, len(sentences), batch_size):
@@ -49,11 +49,6 @@ def get_embeddings_batch(sentences, model, tokenizer, device, batch_size=1000):
         with torch.no_grad():
             outputs = model.roberta(**inputs)
             embeddings = outputs.last_hidden_state[:, 0, :]
-            print(f"\nEmbedding stats:")
-            print(f"  Mean: {embeddings.mean().item():.6f}")
-            print(f"  Std: {embeddings.std().item():.6f}")
-            print(f"  Min: {embeddings.min().item():.6f}")
-            print(f"  Max: {embeddings.max().item():.6f}")     
             all_embeddings.append(embeddings.cpu().numpy())
     
     if not all_embeddings:
@@ -116,10 +111,10 @@ def find_all_gpickle_files(base_path):
     
     return gpickle_files
 
-def batch_process_graphs(base_path, output_base_dir):
+def batch_process_graphs(base_path, output_base_dir, model_epoch):
     """批量處理所有graph檔案，保持相同目錄結構"""
     # 載入模型
-    model, tokenizer, device = load_pretrained_model()
+    model, tokenizer, device = load_pretrained_model(model_epoch)
     
     # 找到所有gpickle檔案
     gpickle_files = find_all_gpickle_files(base_path)
@@ -158,6 +153,7 @@ def batch_process_graphs(base_path, output_base_dir):
     
     # 儲存統計資訊
     stats = {
+        'model_epoch': model_epoch,
         'total_files': len(gpickle_files),
         'processed_files': processed_count,
         'failed_files': failed_count,
@@ -173,16 +169,21 @@ def batch_process_graphs(base_path, output_base_dir):
     print(f"Stats saved to: {stats_path}")
 
 def main():
+    parser = argparse.ArgumentParser(description='Batch embedding with specific pretrain epoch')
+    parser.add_argument('--epoch', type=int, required=True, choices=[25, 50, 100],
+                       help='Pretrain model epoch (25, 50, or 100)')
+    args = parser.parse_args()
+    
     # 設定路徑
     base_path = "/home/tommy/Project/PcodeBERT/outputs/data/GNN/gpickle_merged_adjusted_filtered"
-    output_dir = "/home/tommy/Project/PcodeBERT/outputs/data/GNN/gpickle_merged_adjusted_filtered_temp"
+    output_dir = f"/home/tommy/Project/PcodeBERT/outputs/models/GNN/embeddings_epoch_{args.epoch}"
     
-    print(f"Starting batch processing...")
+    print(f"Starting batch processing with epoch {args.epoch} model...")
     print(f"Input directory: {base_path}")
     print(f"Output directory: {output_dir}")
     
     # 批量處理
-    batch_process_graphs(base_path, output_dir)
+    batch_process_graphs(base_path, output_dir, args.epoch)
 
 if __name__ == "__main__":
-    main() 
+    main()

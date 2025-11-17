@@ -10,3 +10,5 @@ sentencepiece
 seaborn
 torch_geometric
 scikit-learn
+adapter-transformers
+adapters

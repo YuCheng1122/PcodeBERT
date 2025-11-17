@@ -2,12 +2,14 @@ import torch
 import random
 import numpy as np
 from torch_geometric.loader import DataLoader
-from utils import load_cross_arch_data, train_epoch, evaluate, simple_early_stopping, create_gnn_scheduler, test_model, plot_training_curves, save_experiment_results, load_test_data_by_arch
+from utils import load_cross_arch_data, train_epoch, evaluate, simple_early_stopping, create_gnn_scheduler, test_model, plot_training_curves, load_test_data_by_arch
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+import argparse
+import json
+import pandas as pd
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from models.gnn_models import GCN
-from configs.gnn_config import get_gnn_config
 from sklearn.metrics import classification_report
 
 def set_random_seed(seed):
@@ -20,7 +22,7 @@ def set_random_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def run_experiment(seed, config):
+def run_experiment(seed, config, model_name):
     set_random_seed(seed)
     
     train_losses = []
@@ -43,10 +45,8 @@ def run_experiment(seed, config):
     
     device = torch.device(config["device"] if torch.cuda.is_available() else 'cpu')
     
-    # Create model save directory from config
     model_save_dir = config["model_output_dir"]
     os.makedirs(model_save_dir, exist_ok=True)
-    
 
     train_graphs, val_graphs, test_graphs, label_encoder, num_classes = load_cross_arch_data(
         csv_path=csv_path,
@@ -62,7 +62,10 @@ def run_experiment(seed, config):
     val_loader = DataLoader(val_graphs, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_graphs, batch_size=batch_size, shuffle=False)
 
-    model = GCN(num_node_features=256, hidden_channels=hidden_channels, num_classes=num_classes).to(device)
+    # Get embedding dimension from first graph
+    embedding_dim = train_graphs[0].x.shape[1] if len(train_graphs) > 0 else 100
+    
+    model = GCN(num_node_features=embedding_dim, hidden_channels=hidden_channels, num_classes=num_classes).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = torch.nn.CrossEntropyLoss()
     
@@ -95,16 +98,18 @@ def run_experiment(seed, config):
         if epoch % 10 == 0:
             print(f"[Epoch {epoch}] Val Accuracy = {val_accuracy:.4f}, Val Loss = {val_loss:.4f}")
 
-    plot_training_curves(train_losses, val_losses_list, test_losses_list, val_accuracies, seed)
+    plots_dir = f"outputs/plots/w2v_{model_name}"
+    os.makedirs(plots_dir, exist_ok=True)
+    plot_training_curves(train_losses, val_losses_list, test_losses_list, val_accuracies, seed, save_dir=plots_dir)
     
-    # Save model for this seed
     mode_str = "classification" if classification else "detection"
     arch_str = "_".join(source_cpus) if source_cpus else "default"
-    model_filename = f"gnn_model_{mode_str}_{arch_str}_seed_{seed}.pt"
+    model_filename = f"gnn_model_{mode_str}_{arch_str}_{model_name}_seed_{seed}.pt"
     model_path = os.path.join(model_save_dir, model_filename)
     
     torch.save({
         'seed': seed,
+        'model_name': model_name,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'config': config,
@@ -113,7 +118,8 @@ def run_experiment(seed, config):
         'best_val_acc': best_val_acc,
         'train_losses': train_losses,
         'val_losses': val_losses_list,
-        'val_accuracies': val_accuracies
+        'val_accuracies': val_accuracies,
+        'embedding_dim': embedding_dim
     }, model_path)
     
     print(f"Model saved to: {model_path}")
@@ -127,29 +133,61 @@ def run_experiment(seed, config):
         for cpu, graphs in test_graphs_by_arch.items():
             cpu_loader = DataLoader(graphs, batch_size=batch_size, shuffle=False)
             cpu_results = test_model(model, cpu_loader, device, label_encoder)
+            cpu_results['test_samples'] = len(graphs)
             test_results_by_arch[cpu] = cpu_results
             print(f"\n{cpu} Results:")
             print(f"Accuracy: {cpu_results['accuracy']:.4f}")
-            print(f"Precision: {cpu_results['precision']:.4f}")
-            print(f"Recall: {cpu_results['recall']:.4f}")
             print(f"F1-micro: {cpu_results['f1_micro']:.4f}")
             print(f"F1-macro: {cpu_results['f1_macro']:.4f}")
             print(f"AUC: {cpu_results['auc']:.4f}")
+            print(f"Precision: {cpu_results['precision']:.4f}")
+            print(f"Recall: {cpu_results['recall']:.4f}")
         
         return test_results_by_arch
     else:
         test_results = test_model(model, test_loader, device, label_encoder)
+        test_results['test_samples'] = len(test_graphs)
         return {'overall': test_results}
 
 
 def main():
-    config = get_gnn_config()
+    parser = argparse.ArgumentParser(description='GNN training with W2V embedding models')
+    parser.add_argument('--model', type=str, required=True, choices=['fasttext', 'cbow', 'skipgram'],
+                       help='Word2Vec model type (fasttext, cbow, or skipgram)')
+    parser.add_argument('--source_cpus', nargs='+', default=["x86_64"],
+                       help='Source CPU architectures for training')
+    parser.add_argument('--target_cpus', nargs='+', default=["ARM", "PPC", "MIPS", "Intel"],
+                       help='Target CPU architectures for testing')
+    args = parser.parse_args()
+    
+    BASE_PATH = "/home/tommy/Project/PcodeBERT"
+    
+    config = {
+        "classification": False,  
+        "source_cpus": args.source_cpus,     
+        "target_cpus": args.target_cpus,
+
+        "csv_path": f"{BASE_PATH}/dataset/csv/merged_adjusted_filtered.csv",
+        "graph_dir": f"{BASE_PATH}/outputs/data/GNN/gpickle_merged_adjusted_filtered_{args.model}",
+        "cache_file": f"{BASE_PATH}/outputs/cache/gnn_data_{args.model}.pkl",
+        "model_output_dir": f"{BASE_PATH}/outputs/models/GNN/models_{args.model}",
+        
+        "batch_size": 32,
+        "hidden_channels": 128,
+        "learning_rate": 0.01,
+        "epochs": 200,
+        "patience": 20,
+        
+        "seeds": [42, 123, 2025, 31415, 8888],
+        "device": "cuda"
+    }
+    
     seeds = config["seeds"]
     
-    # 判斷模式
     mode = "Classification (family)" if config["classification"] else "Detection (label)"
     arch_mode = "單架構" if not config["target_cpus"] else "跨架構"
     
+    print(f"W2V Model: {args.model}")
     print(f"模式: {mode}")
     print(f"架構模式: {arch_mode}")
     print(f"Training Architecture: {config['source_cpus']}")
@@ -162,7 +200,7 @@ def main():
 
     for i, seed in enumerate(seeds):
         print(f"\n=== Experiment {i+1}, Seed = {seed} ===")
-        results = run_experiment(seed, config)
+        results = run_experiment(seed, config, args.model)
         all_results.append(results)
 
     if config["target_cpus"]:
@@ -173,50 +211,56 @@ def main():
         results_by_arch = {}
         for cpu in config["target_cpus"]:
             cpu_accs = [r[cpu]['accuracy'] for r in all_results]
-            cpu_precisions = [r[cpu]['precision'] for r in all_results]
-            cpu_recalls = [r[cpu]['recall'] for r in all_results]
             cpu_f1_micros = [r[cpu]['f1_micro'] for r in all_results]
             cpu_f1_macros = [r[cpu]['f1_macro'] for r in all_results]
             cpu_aucs = [r[cpu]['auc'] for r in all_results]
+            cpu_precisions = [r[cpu]['precision'] for r in all_results]
+            cpu_recalls = [r[cpu]['recall'] for r in all_results]
+            cpu_test_samples = all_results[0][cpu]['test_samples']
             
             results_by_arch[cpu] = {
                 'avg_accuracy': np.mean(cpu_accs),
                 'std_accuracy': np.std(cpu_accs),
-                'avg_precision': np.mean(cpu_precisions),
-                'std_precision': np.std(cpu_precisions),
-                'avg_recall': np.mean(cpu_recalls),
-                'std_recall': np.std(cpu_recalls),
                 'avg_f1_micro': np.mean(cpu_f1_micros),
                 'std_f1_micro': np.std(cpu_f1_micros),
                 'avg_f1_macro': np.mean(cpu_f1_macros),
                 'std_f1_macro': np.std(cpu_f1_macros),
                 'avg_auc': np.mean(cpu_aucs),
-                'std_auc': np.std(cpu_aucs)
+                'std_auc': np.std(cpu_aucs),
+                'avg_precision': np.mean(cpu_precisions),
+                'std_precision': np.std(cpu_precisions),
+                'avg_recall': np.mean(cpu_recalls),
+                'std_recall': np.std(cpu_recalls),
+                'test_samples': cpu_test_samples
             }
             
             print(f"\n{cpu}:")
             print(f"  Accuracy     : {results_by_arch[cpu]['avg_accuracy']:.4f} ± {results_by_arch[cpu]['std_accuracy']:.4f}")
-            print(f"  Precision    : {results_by_arch[cpu]['avg_precision']:.4f} ± {results_by_arch[cpu]['std_precision']:.4f}")
-            print(f"  Recall       : {results_by_arch[cpu]['avg_recall']:.4f} ± {results_by_arch[cpu]['std_recall']:.4f}")
             print(f"  F1-micro     : {results_by_arch[cpu]['avg_f1_micro']:.4f} ± {results_by_arch[cpu]['std_f1_micro']:.4f}")
             print(f"  F1-macro     : {results_by_arch[cpu]['avg_f1_macro']:.4f} ± {results_by_arch[cpu]['std_f1_macro']:.4f}")
             print(f"  AUC          : {results_by_arch[cpu]['avg_auc']:.4f} ± {results_by_arch[cpu]['std_auc']:.4f}")
+            print(f"  Precision    : {results_by_arch[cpu]['avg_precision']:.4f} ± {results_by_arch[cpu]['std_precision']:.4f}")
+            print(f"  Recall       : {results_by_arch[cpu]['avg_recall']:.4f} ± {results_by_arch[cpu]['std_recall']:.4f}")
+            print(f"  Test Samples : {results_by_arch[cpu]['test_samples']}")
         
         all_results_flat = []
         for seed, result_dict in zip(seeds, all_results):
             for cpu, metrics in result_dict.items():
                 all_results_flat.append({
+                    'model_name': args.model,
                     'seed': seed,
                     'cpu': cpu,
                     'accuracy': metrics['accuracy'],
-                    'precision': metrics['precision'],
-                    'recall': metrics['recall'],
                     'f1_micro': metrics['f1_micro'],
                     'f1_macro': metrics['f1_macro'],
-                    'auc': metrics['auc']
+                    'auc': metrics['auc'],
+                    'precision': metrics['precision'],
+                    'recall': metrics['recall'],
+                    'test_samples': metrics['test_samples']
                 })
         
         results_summary = {
+            'model_name': args.model,
             'mode': mode,
             'arch_mode': arch_mode,
             'source_cpus': config['source_cpus'],
@@ -227,62 +271,81 @@ def main():
         }
     else:
         overall_accs = [r['overall']['accuracy'] for r in all_results]
-        overall_precisions = [r['overall']['precision'] for r in all_results]
-        overall_recalls = [r['overall']['recall'] for r in all_results]
         overall_f1_micros = [r['overall']['f1_micro'] for r in all_results]
         overall_f1_macros = [r['overall']['f1_macro'] for r in all_results]
         overall_aucs = [r['overall']['auc'] for r in all_results]
+        overall_precisions = [r['overall']['precision'] for r in all_results]
+        overall_recalls = [r['overall']['recall'] for r in all_results]
+        overall_test_samples = all_results[0]['overall']['test_samples']
         
         avg_acc = np.mean(overall_accs)
-        avg_precision = np.mean(overall_precisions)
-        avg_recall = np.mean(overall_recalls)
         avg_f1_micro = np.mean(overall_f1_micros)
         avg_f1_macro = np.mean(overall_f1_macros)
         avg_auc = np.mean(overall_aucs)
+        avg_precision = np.mean(overall_precisions)
+        avg_recall = np.mean(overall_recalls)
         std_acc = np.std(overall_accs)
-        std_precision = np.std(overall_precisions)
-        std_recall = np.std(overall_recalls)
         std_f1_micro = np.std(overall_f1_micros)
         std_f1_macro = np.std(overall_f1_macros)
         std_auc = np.std(overall_aucs)
+        std_precision = np.std(overall_precisions)
+        std_recall = np.std(overall_recalls)
         
         print(f"\n{len(seeds)} Experiments Summary:")
         print(f"Accuracy     : {avg_acc:.4f} ± {std_acc:.4f}")
-        print(f"Precision    : {avg_precision:.4f} ± {std_precision:.4f}")
-        print(f"Recall       : {avg_recall:.4f} ± {std_recall:.4f}")
         print(f"F1-micro     : {avg_f1_micro:.4f} ± {std_f1_micro:.4f}")
         print(f"F1-macro     : {avg_f1_macro:.4f} ± {std_f1_macro:.4f}")
         print(f"AUC          : {avg_auc:.4f} ± {std_auc:.4f}")
+        print(f"Precision    : {avg_precision:.4f} ± {std_precision:.4f}")
+        print(f"Recall       : {avg_recall:.4f} ± {std_recall:.4f}")
+        print(f"Test Samples : {overall_test_samples}")
         
         results_summary = {
+            'model_name': args.model,
             'mode': mode,
             'arch_mode': arch_mode,
             'source_cpus': config['source_cpus'],
             'target_cpus': config['target_cpus'],
             'avg_accuracy': avg_acc,
             'std_accuracy': std_acc,
-            'avg_precision': avg_precision,
-            'std_precision': std_precision,
-            'avg_recall': avg_recall,
-            'std_recall': std_recall,
             'avg_f1_micro': avg_f1_micro,
             'std_f1_micro': std_f1_micro,
             'avg_f1_macro': avg_f1_macro,
             'std_f1_macro': std_f1_macro,
             'avg_auc': avg_auc,
             'std_auc': std_auc,
+            'avg_precision': avg_precision,
+            'std_precision': std_precision,
+            'avg_recall': avg_recall,
+            'std_recall': std_recall,
+            'test_samples': overall_test_samples,
             'seeds': seeds,
-            'all_results': [{'seed': seed, 'accuracy': r['overall']['accuracy'], 
-                           'precision': r['overall']['precision'],
-                           'recall': r['overall']['recall'],
+            'all_results': [{'model_name': args.model, 'seed': seed, 
+                           'accuracy': r['overall']['accuracy'], 
                            'f1_micro': r['overall']['f1_micro'], 
                            'f1_macro': r['overall']['f1_macro'],
-                           'auc': r['overall']['auc']} 
+                           'auc': r['overall']['auc'],
+                           'precision': r['overall']['precision'],
+                           'recall': r['overall']['recall'],
+                           'test_samples': r['overall']['test_samples']} 
                           for seed, r in zip(seeds, all_results)]
         }
     
-    timestamp = save_experiment_results(results_summary)
+    save_dir = f"outputs/results/w2v_{args.model}"
+    os.makedirs(save_dir, exist_ok=True)
+    
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    
+    if 'all_results' in results_summary:
+        results_df = pd.DataFrame(results_summary['all_results'])
+        results_df.to_csv(os.path.join(save_dir, f'results_{timestamp}.csv'), index=False)
+    
+    summary_data = {k: v for k, v in results_summary.items() if k != 'all_results'}
+    with open(os.path.join(save_dir, f'summary_{timestamp}.json'), 'w') as f:
+        json.dump(summary_data, f, indent=2)
+    
     print(f"\nResults saved with timestamp: {timestamp}")
+    print(f"Results directory: {save_dir}")
 
 if __name__ == "__main__":
     main()
