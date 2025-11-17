@@ -1,13 +1,13 @@
 def get_gnn_config():
-    BASE_PATH = "/home/tommy/Project/PcodeBERT"
+    BASE_PATH = "/home/tommy/Projects/PcodeBERT"
     
     config = {
-        "classification": True,  
+        "classification": False,  
         "source_cpus": ["AMD X86-64"],     
-        "target_cpus": [],        
+        "target_cpus": ["ARM-32"],        
         
-        "csv_path": f"{BASE_PATH}/dataset/csv/base_dataset_filtered.csv",
-        "graph_dir": f"{BASE_PATH}/outputs/embeddings",
+        "csv_path": f"{BASE_PATH}/dataset/csv/base_dataset_filtered_v3.csv",
+        "graph_dir": f"/home/tommy/Projects/pcodeFcg/vector/PcodeBERT/GNN/train_x86",
         "cache_file": f"{BASE_PATH}/outputs/cache/gnn_data.pkl",
         "model_output_dir": f"{BASE_PATH}/outputs/models/gnn",
         

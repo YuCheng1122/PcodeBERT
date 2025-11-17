@@ -5,20 +5,20 @@ from multiprocessing import Pool, cpu_count
 from tqdm import tqdm
 
 
-from utils import iterate_json_files, extract_sentences_from_file, read_filenames_from_csv
+from utils import iterate_json_files, extract_sentences_from_file_BERT, read_filenames_from_csv
 
 
-CSV_PATH = Path("/home/tommy/Projects/PcodeBERT/dataset/csv/base_dataset_filtered.csv")
-RAW_DATA_PATH = Path("/home/tommy/Projects/PcodeBERT/reverse/results")
+CSV_PATH = Path("/home/tommy/Projects/PcodeBERT/dataset/csv/merged_adjusted_filtered.csv")
+RAW_DATA_PATH = Path("/home/tommy/Projects/PcodeBERT/reverse/new/results")
 TEMP_DIR = Path("/home/tommy/Projects/PcodeBERT/outputs/preprocessed/temp_files")
-FINAL_CORPUS_PATH = Path("/home/tommy/Projects/PcodeBERT/outputs/preprocessed/pcode_corpus_x86_64.pkl")
+FINAL_CORPUS_PATH = Path("/home/tommy/Projects/PcodeBERT/outputs/preprocessed/pcode_corpus_x86_64_new_data.pkl")
 ERROR_LOG_PATH = Path("/home/tommy/Projects/PcodeBERT/outputs/preprocessed/error_log.txt")
-TARGET_CPU = "AMD X86-64"
+TARGET_CPU = "x86_64"
 
 
 def process_and_save_worker(args):
     file_data, output_path = args
-    sentences = extract_sentences_from_file(file_data)
+    sentences = extract_sentences_from_file_BERT(file_data)
     if sentences:
         with open(output_path, "wb") as f:
             pickle.dump(sentences, f)
@@ -34,6 +34,8 @@ def build_batches(csv_path: Path, root_dir: Path, temp_output_dir: Path, error_l
 
     print("--- Stage 1: Building Batches ---")
     file_iterator = iterate_json_files(csv_path, root_dir, error_log_path, cpu_filter=cpu_to_process)
+
+    print("\n=== Starting Batch Processing ===")
     
     def task_generator():
         for i, file_data in enumerate(file_iterator):
@@ -43,10 +45,6 @@ def build_batches(csv_path: Path, root_dir: Path, temp_output_dir: Path, error_l
     file_names_for_count = read_filenames_from_csv(csv_path, cpu_filter=cpu_to_process)
     total_files = len(file_names_for_count)
     del file_names_for_count
-
-    if total_files == 0:
-        print("No files found for the specified CPU. Exiting.")
-        return
 
     print(f"Found {total_files} files to process. Using {cpu_count()} CPU cores.")
 
@@ -81,7 +79,6 @@ def merge_batches(temp_dir: Path, final_output_path: Path):
     print("Merge complete!")
 
 if __name__ == "__main__":
-
     build_batches(CSV_PATH, RAW_DATA_PATH, TEMP_DIR, ERROR_LOG_PATH, cpu_to_process=TARGET_CPU)
     merge_batches(TEMP_DIR, FINAL_CORPUS_PATH)
 
