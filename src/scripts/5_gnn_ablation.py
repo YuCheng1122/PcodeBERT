@@ -156,7 +156,7 @@ def main():
                        help='Pretrain model epoch (25, 50, or 100)')
     parser.add_argument('--source_cpus', nargs='+', default=["x86_64"],
                        help='Source CPU architectures for training')
-    parser.add_argument('--target_cpus', nargs='+', default=["ARM", "PPC", "MIPS", "x86_64", "Intel"],
+    parser.add_argument('--target_cpus', nargs='+', default=["ARM", "PPC", "MIPS", "Intel"],
                        help='Target CPU architectures for testing')
     args = parser.parse_args()
     

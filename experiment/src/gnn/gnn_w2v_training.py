@@ -8,8 +8,9 @@ import os
 import argparse
 import json
 import pandas as pd
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from models.gnn_models import GCN
+from sklearn.metrics import classification_report
 
 def set_random_seed(seed):
     torch.manual_seed(seed)
@@ -21,7 +22,7 @@ def set_random_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def run_experiment(seed, config, adapter_name):
+def run_experiment(seed, config, model_name):
     set_random_seed(seed)
     
     train_losses = []
@@ -61,7 +62,10 @@ def run_experiment(seed, config, adapter_name):
     val_loader = DataLoader(val_graphs, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_graphs, batch_size=batch_size, shuffle=False)
 
-    model = GCN(num_node_features=256, hidden_channels=hidden_channels, num_classes=num_classes).to(device)
+    # Get embedding dimension from first graph
+    embedding_dim = train_graphs[0].x.shape[1] if len(train_graphs) > 0 else 100
+    
+    model = GCN(num_node_features=embedding_dim, hidden_channels=hidden_channels, num_classes=num_classes).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = torch.nn.CrossEntropyLoss()
     
@@ -94,18 +98,18 @@ def run_experiment(seed, config, adapter_name):
         if epoch % 10 == 0:
             print(f"[Epoch {epoch}] Val Accuracy = {val_accuracy:.4f}, Val Loss = {val_loss:.4f}")
 
-    plots_dir = f"outputs/plots/{adapter_name}"
+    plots_dir = f"outputs/plots/w2v_{model_name}"
     os.makedirs(plots_dir, exist_ok=True)
     plot_training_curves(train_losses, val_losses_list, test_losses_list, val_accuracies, seed, save_dir=plots_dir)
     
     mode_str = "classification" if classification else "detection"
     arch_str = "_".join(source_cpus) if source_cpus else "default"
-    model_filename = f"gnn_model_{mode_str}_{arch_str}_{adapter_name}_seed_{seed}.pt"
+    model_filename = f"gnn_model_{mode_str}_{arch_str}_{model_name}_seed_{seed}.pt"
     model_path = os.path.join(model_save_dir, model_filename)
     
     torch.save({
         'seed': seed,
-        'adapter_name': adapter_name,
+        'model_name': model_name,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'config': config,
@@ -114,7 +118,8 @@ def run_experiment(seed, config, adapter_name):
         'best_val_acc': best_val_acc,
         'train_losses': train_losses,
         'val_losses': val_losses_list,
-        'val_accuracies': val_accuracies
+        'val_accuracies': val_accuracies,
+        'embedding_dim': embedding_dim
     }, model_path)
     
     print(f"Model saved to: {model_path}")
@@ -146,32 +151,33 @@ def run_experiment(seed, config, adapter_name):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='GNN training with adapter embeddings')
-    parser.add_argument('--epoch', type=int, required=True, choices=[10, 20, 30],
-                       help='Adapter checkpoint epoch')
-    parser.add_argument('--loss', type=str, required=True, choices=['mse', 'cosine'],
-                       help='Loss function')
-    parser.add_argument('--layers', type=int, required=True, choices=[6],
-                       help='Number of adapter layers')
+    parser = argparse.ArgumentParser(description='GNN training with W2V embedding models')
+    parser.add_argument('--model', type=str, required=True, choices=['fasttext', 'cbow', 'skipgram'],
+                       help='Word2Vec model type (fasttext, cbow, or skipgram)')
+    parser.add_argument('--source_cpus', nargs='+', default=["x86_64"],
+                       help='Source CPU architectures for training')
+    parser.add_argument('--target_cpus', nargs='+', default=["ARM", "PPC", "MIPS", "Intel"],
+                       help='Target CPU architectures for testing')
     args = parser.parse_args()
     
     BASE_PATH = "/home/tommy/Project/PcodeBERT"
     
-    config_name = f"{args.loss}_{args.layers}layers_epoch{args.epoch}"
-    
     config = {
-        "classification": False,
-        "source_cpus": ["x86_64"],
-        "target_cpus": ["ARM"],
+        "classification": False,  
+        "source_cpus": args.source_cpus,     
+        "target_cpus": args.target_cpus,
+
         "csv_path": f"{BASE_PATH}/dataset/csv/merged_adjusted_filtered.csv",
-        "graph_dir": f"{BASE_PATH}/outputs/models/Adapters/ablation/embeddings/{config_name}",
-        "cache_file": f"{BASE_PATH}/outputs/cache/gnn_data_{config_name}.pkl",
-        "model_output_dir": f"{BASE_PATH}/outputs/models/Adapters/ablation/gnn_models/{config_name}",
+        "graph_dir": f"{BASE_PATH}/outputs/data/GNN/gpickle_merged_adjusted_filtered_{args.model}",
+        "cache_file": f"{BASE_PATH}/outputs/cache/gnn_data_{args.model}.pkl",
+        "model_output_dir": f"{BASE_PATH}/outputs/models/GNN/models_{args.model}",
+        
         "batch_size": 32,
         "hidden_channels": 128,
         "learning_rate": 0.01,
         "epochs": 200,
         "patience": 20,
+        
         "seeds": [42, 123, 2025, 31415, 8888],
         "device": "cuda"
     }
@@ -181,9 +187,7 @@ def main():
     mode = "Classification (family)" if config["classification"] else "Detection (label)"
     arch_mode = "單架構" if not config["target_cpus"] else "跨架構"
     
-    print(f"\nAdapter: {config_name}")
-    print(f"Pretrain Model: epoch 25")
-    print(f"Adapter Epochs: {args.epoch}, Loss: {args.loss}, Layers: {args.layers}")
+    print(f"W2V Model: {args.model}")
     print(f"模式: {mode}")
     print(f"架構模式: {arch_mode}")
     print(f"Training Architecture: {config['source_cpus']}")
@@ -196,7 +200,7 @@ def main():
 
     for i, seed in enumerate(seeds):
         print(f"\n=== Experiment {i+1}, Seed = {seed} ===")
-        results = run_experiment(seed, config, config_name)
+        results = run_experiment(seed, config, args.model)
         all_results.append(results)
 
     if config["target_cpus"]:
@@ -243,11 +247,7 @@ def main():
         for seed, result_dict in zip(seeds, all_results):
             for cpu, metrics in result_dict.items():
                 all_results_flat.append({
-                    'adapter_name': config_name,
-                    'pretrain_model_epoch': 25,
-                    'adapter_epochs': args.epoch,
-                    'loss_function': args.loss,
-                    'adapter_layers': args.layers,
+                    'model_name': args.model,
                     'seed': seed,
                     'cpu': cpu,
                     'accuracy': metrics['accuracy'],
@@ -260,11 +260,7 @@ def main():
                 })
         
         results_summary = {
-            'adapter_name': config_name,
-            'pretrain_model_epoch': 25,
-            'adapter_epochs': args.epoch,
-            'loss_function': args.loss,
-            'adapter_layers': args.layers,
+            'model_name': args.model,
             'mode': mode,
             'arch_mode': arch_mode,
             'source_cpus': config['source_cpus'],
@@ -305,11 +301,7 @@ def main():
         print(f"Test Samples : {overall_test_samples}")
         
         results_summary = {
-            'adapter_name': config_name,
-            'pretrain_model_epoch': 25,
-            'adapter_epochs': args.epoch,
-            'loss_function': args.loss,
-            'adapter_layers': args.layers,
+            'model_name': args.model,
             'mode': mode,
             'arch_mode': arch_mode,
             'source_cpus': config['source_cpus'],
@@ -328,12 +320,7 @@ def main():
             'std_recall': std_recall,
             'test_samples': overall_test_samples,
             'seeds': seeds,
-            'all_results': [{'adapter_name': config_name,
-                           'pretrain_model_epoch': 25,
-                           'adapter_epochs': args.epoch,
-                           'loss_function': args.loss,
-                           'adapter_layers': args.layers,
-                           'seed': seed, 
+            'all_results': [{'model_name': args.model, 'seed': seed, 
                            'accuracy': r['overall']['accuracy'], 
                            'f1_micro': r['overall']['f1_micro'], 
                            'f1_macro': r['overall']['f1_macro'],
@@ -344,7 +331,7 @@ def main():
                           for seed, r in zip(seeds, all_results)]
         }
     
-    save_dir = f"outputs/results/adapter_ablation/{config_name}"
+    save_dir = f"outputs/results/w2v_{args.model}"
     os.makedirs(save_dir, exist_ok=True)
     
     timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
@@ -358,7 +345,7 @@ def main():
         json.dump(summary_data, f, indent=2)
     
     print(f"\nResults saved with timestamp: {timestamp}")
-    print(f"Results directory: {save_dir}\n")
+    print(f"Results directory: {save_dir}")
 
 if __name__ == "__main__":
     main()

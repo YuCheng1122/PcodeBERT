@@ -37,3 +37,5 @@ class AdapterEmbeddingModel(nn.Module):
     def load_adapter(self, load_path):
         self.model.load_adapter(load_path, load_as=self.adapter_name)
         self.model.set_active_adapters(self.adapter_name)
+        print(f"Active adapters: {self.model.active_adapters}")
+        print(f"Loaded adapters: {list(self.model.adapters_config.adapters.keys())}")

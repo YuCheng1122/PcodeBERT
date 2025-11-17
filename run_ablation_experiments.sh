@@ -13,7 +13,7 @@ EPOCHS=(25 50 100)
 
 # Source and target CPUs
 SOURCE_CPUS="x86_64"
-TARGET_CPUS="ARM PPC MIPS x86_64"
+TARGET_CPUS="ARM PPC MIPS Intel"
 
 # Create log directory and file
 LOG_DIR="outputs/logs"
