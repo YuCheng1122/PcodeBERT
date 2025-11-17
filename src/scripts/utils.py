@@ -5,6 +5,7 @@ import os
 import pickle
 import re
 import torch
+from sklearn.model_selection import train_test_split
 from pathlib import Path
 from typing import List, Dict, Tuple, Generator, Optional, Union
 from datasets import Dataset, IterableDataset
@@ -431,9 +432,6 @@ def load_cross_arch_data(csv_path, graph_dir, source_cpus, target_cpus, cache_fi
         
         # 載入圖資料
         all_graphs, all_labels = load_graphs_from_df(all_df, graph_dir, classification)
-        
-        # 分割訓練、驗證和測試資料
-        from sklearn.model_selection import train_test_split
         
         # 先分出測試集 (20%)
         train_val_graphs, test_graphs, train_val_labels, test_labels = train_test_split(

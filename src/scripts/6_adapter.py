@@ -37,17 +37,24 @@ def collate_fn(batch, tokenizer, max_length=512):
     return inputs1, inputs2, labels
 
 
-def train_epoch(model, dataloader, optimizer, scheduler, criterion, device):
+def train_epoch(model, dataloader, optimizer, scheduler, criteria, device):
     model.train()
     total_loss, batch_count = 0, 0
     
-    for inputs1, inputs2, _ in tqdm(dataloader, desc="Training", leave=False):
+    for inputs1, inputs2, labels in tqdm(dataloader, desc="Training", leave=False):
         inputs1 = {k: v.to(device) for k, v in inputs1.items()}
         inputs2 = {k: v.to(device) for k, v in inputs2.items()}
+        labels = labels.to(device)
         
         emb1 = model(inputs1['input_ids'], inputs1['attention_mask'])
         emb2 = model(inputs2['input_ids'], inputs2['attention_mask'])
-        loss = criterion(emb1, emb2)
+        
+        loss = 0
+        for criterion in criteria:
+            if isinstance(criterion, nn.CosineEmbeddingLoss):
+                loss += criterion(emb1, emb2, labels)
+            else:
+                loss += criterion(emb1, emb2)
         
         optimizer.zero_grad()
         loss.backward()
@@ -60,18 +67,25 @@ def train_epoch(model, dataloader, optimizer, scheduler, criterion, device):
     return total_loss / batch_count if batch_count > 0 else 0
 
 
-def validate(model, dataloader, criterion, device):
+def validate(model, dataloader, criteria, device):
     model.eval()
     total_loss, batch_count = 0, 0
     
     with torch.no_grad():
-        for inputs1, inputs2, _ in tqdm(dataloader, desc="Validation", leave=False):
+        for inputs1, inputs2, labels in tqdm(dataloader, desc="Validation", leave=False):
             inputs1 = {k: v.to(device) for k, v in inputs1.items()}
             inputs2 = {k: v.to(device) for k, v in inputs2.items()}
+            labels = labels.to(device)
             
             emb1 = model(inputs1['input_ids'], inputs1['attention_mask'])
             emb2 = model(inputs2['input_ids'], inputs2['attention_mask'])
-            loss = criterion(emb1, emb2)
+            
+            loss = 0
+            for criterion in criteria:
+                if isinstance(criterion, nn.CosineEmbeddingLoss):
+                    loss += criterion(emb1, emb2, labels)
+                else:
+                    loss += criterion(emb1, emb2)
             
             total_loss += loss.item()
             batch_count += 1
@@ -123,17 +137,22 @@ def train_adapter(config):
         num_training_steps=num_training_steps
     )
     
-    criterion = nn.MSELoss()
+    criteria = []
+    for loss_fn in config["loss_functions"]:
+        if loss_fn == "mse":
+            criteria.append(nn.MSELoss())
+        elif loss_fn == "cosine":
+            criteria.append(nn.CosineEmbeddingLoss())
     
     log_file = os.path.join(save_dir, "training_log.txt")
     with open(log_file, "w") as f:
         f.write("epoch,train_loss,val_loss\n")
     
-    checkpoint_epochs = [10, 20, 30]
+    checkpoint_epochs = [5,20,30]
     
     for epoch in tqdm(range(config["epochs"]), desc="Epochs"):
-        train_loss = train_epoch(model, train_loader, optimizer, scheduler, criterion, device)
-        val_loss = validate(model, val_loader, criterion, device)
+        train_loss = train_epoch(model, train_loader, optimizer, scheduler, criteria, device)
+        val_loss = validate(model, val_loader, criteria, device)
         
         print(f"Epoch {epoch+1}: train_loss={train_loss:.4f}, val_loss={val_loss:.4f}")
         
@@ -144,6 +163,10 @@ def train_adapter(config):
             checkpoint_dir = os.path.join(save_dir, f"epoch_{epoch+1}")
             model.save_adapter(checkpoint_dir)
             print(f"Saved checkpoint at epoch {epoch+1}")
+    
+    final_checkpoint_dir = os.path.join(save_dir, f"epoch_{config['epochs']}")
+    model.save_adapter(final_checkpoint_dir)
+    print(f"Saved final model at epoch {config['epochs']}")
 
 
 def main():

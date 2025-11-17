@@ -2,12 +2,13 @@ import torch
 import random
 import numpy as np
 from torch_geometric.loader import DataLoader
-from utils import load_cross_arch_data, train_epoch, evaluate, simple_early_stopping, create_gnn_scheduler, test_model, plot_training_curves, load_test_data_by_arch
+from utils import load_cross_arch_data, train_epoch, evaluate, simple_early_stopping, create_gnn_scheduler, test_model, load_test_data_by_arch
 import sys
 import os
 import argparse
 import json
 import pandas as pd
+from datetime import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from models.gnn_models import GCN
 
@@ -20,6 +21,48 @@ def set_random_seed(seed):
         torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+def plot_training_curves_custom(train_losses, val_losses, test_losses, val_accuracies, seed, save_dir):
+    """Custom plotting function that saves to specified directory"""
+    import matplotlib.pyplot as plt
+    
+    os.makedirs(save_dir, exist_ok=True)
+    
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    
+    # Loss curves
+    axes[0, 0].plot(train_losses, label='Train Loss', marker='o')
+    axes[0, 0].plot(val_losses, label='Val Loss', marker='s')
+    axes[0, 0].plot(test_losses, label='Test Loss', marker='^')
+    axes[0, 0].set_xlabel('Epoch')
+    axes[0, 0].set_ylabel('Loss')
+    axes[0, 0].set_title('Training, Validation & Test Loss')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True)
+    
+    # Accuracy curve
+    axes[0, 1].plot(val_accuracies, label='Val Accuracy', marker='o', color='green')
+    axes[0, 1].set_xlabel('Epoch')
+    axes[0, 1].set_ylabel('Accuracy')
+    axes[0, 1].set_title('Validation Accuracy')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True)
+    
+    # Loss comparison
+    axes[1, 0].plot(train_losses, label='Train', marker='o')
+    axes[1, 0].plot(val_losses, label='Validation', marker='s')
+    axes[1, 0].set_xlabel('Epoch')
+    axes[1, 0].set_ylabel('Loss')
+    axes[1, 0].set_title('Train vs Validation Loss')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True)
+    
+    # Hide unused subplot
+    axes[1, 1].axis('off')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, f'training_curves_seed_{seed}.png'), dpi=300, bbox_inches='tight')
+    plt.close()
 
 def run_experiment(seed, config, adapter_name):
     set_random_seed(seed)
@@ -94,9 +137,10 @@ def run_experiment(seed, config, adapter_name):
         if epoch % 10 == 0:
             print(f"[Epoch {epoch}] Val Accuracy = {val_accuracy:.4f}, Val Loss = {val_loss:.4f}")
 
-    plots_dir = f"outputs/plots/{adapter_name}"
+    # Save plots to results directory
+    plots_dir = config["plots_dir"]
     os.makedirs(plots_dir, exist_ok=True)
-    plot_training_curves(train_losses, val_losses_list, test_losses_list, val_accuracies, seed, save_dir=plots_dir)
+    plot_training_curves_custom(train_losses, val_losses_list, test_losses_list, val_accuracies, seed, plots_dir)
     
     mode_str = "classification" if classification else "detection"
     arch_str = "_".join(source_cpus) if source_cpus else "default"
@@ -132,11 +176,11 @@ def run_experiment(seed, config, adapter_name):
             test_results_by_arch[cpu] = cpu_results
             print(f"\n{cpu} Results:")
             print(f"Accuracy: {cpu_results['accuracy']:.4f}")
+            print(f"Precision: {cpu_results['precision']:.4f}")
+            print(f"Recall: {cpu_results['recall']:.4f}")
             print(f"F1-micro: {cpu_results['f1_micro']:.4f}")
             print(f"F1-macro: {cpu_results['f1_macro']:.4f}")
             print(f"AUC: {cpu_results['auc']:.4f}")
-            print(f"Precision: {cpu_results['precision']:.4f}")
-            print(f"Recall: {cpu_results['recall']:.4f}")
         
         return test_results_by_arch
     else:
@@ -147,26 +191,25 @@ def run_experiment(seed, config, adapter_name):
 
 def main():
     parser = argparse.ArgumentParser(description='GNN training with adapter embeddings')
-    parser.add_argument('--epoch', type=int, required=True, choices=[10, 20, 30],
-                       help='Adapter checkpoint epoch')
+    parser.add_argument('--epoch', type=int, required=True, choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                       help='Adapter checkpoint epoch (1-10)')
     parser.add_argument('--loss', type=str, required=True, choices=['mse', 'cosine'],
-                       help='Loss function')
-    parser.add_argument('--layers', type=int, required=True, choices=[6],
-                       help='Number of adapter layers')
+                       help='Loss function type')
     args = parser.parse_args()
     
     BASE_PATH = "/home/tommy/Project/PcodeBERT"
     
-    config_name = f"{args.loss}_{args.layers}layers_epoch{args.epoch}"
+    config_name = f"{args.loss}_6layers_epoch{args.epoch}"
     
     config = {
         "classification": False,
         "source_cpus": ["x86_64"],
         "target_cpus": ["ARM"],
         "csv_path": f"{BASE_PATH}/dataset/csv/merged_adjusted_filtered.csv",
-        "graph_dir": f"{BASE_PATH}/outputs/models/Adapters/ablation/embeddings/{config_name}",
-        "cache_file": f"{BASE_PATH}/outputs/cache/gnn_data_{config_name}.pkl",
-        "model_output_dir": f"{BASE_PATH}/outputs/models/Adapters/ablation/gnn_models/{config_name}",
+        "graph_dir": f"{BASE_PATH}/outputs/data/GNN/gpickle_{args.loss}_epoch{args.epoch}",
+        "cache_file": f"{BASE_PATH}/outputs/cache/gnn_data_{args.loss}_epoch{args.epoch}.pkl",
+        "model_output_dir": f"{BASE_PATH}/outputs/results/{config_name}/models",
+        "plots_dir": f"{BASE_PATH}/outputs/results/{config_name}/plots",
         "batch_size": 32,
         "hidden_channels": 128,
         "learning_rate": 0.01,
@@ -181,90 +224,87 @@ def main():
     mode = "Classification (family)" if config["classification"] else "Detection (label)"
     arch_mode = "單架構" if not config["target_cpus"] else "跨架構"
     
-    print(f"\nAdapter: {config_name}")
-    print(f"Pretrain Model: epoch 25")
-    print(f"Adapter Epochs: {args.epoch}, Loss: {args.loss}, Layers: {args.layers}")
+    print(f"\n{'='*70}")
+    print(f"GNN Training with Adapter Embeddings")
+    print(f"{'='*70}")
+    print(f"Adapter: {config_name}")
+    print(f"Adapter Epochs: {args.epoch}, Loss: {args.loss.upper()}")
     print(f"模式: {mode}")
     print(f"架構模式: {arch_mode}")
     print(f"Training Architecture: {config['source_cpus']}")
-    if config['target_cpus']:
-        print(f"Testing Architecture: {config['target_cpus']}")
+    print(f"Testing Architecture: {config['target_cpus']}")
     print(f"Experiment Count: {len(seeds)}")
     print(f"Graph Data Directory: {config['graph_dir']}")
+    print(f"{'='*70}\n")
 
     all_results = []
 
     for i, seed in enumerate(seeds):
-        print(f"\n=== Experiment {i+1}, Seed = {seed} ===")
+        print(f"\n=== Experiment {i+1}/{len(seeds)}, Seed = {seed} ===")
         results = run_experiment(seed, config, config_name)
         all_results.append(results)
 
+    print(f"\n{'='*70}")
+    print(f"Summary of {len(seeds)} Experiments")
+    print(f"{'='*70}")
+    
     if config["target_cpus"]:
-        print(f"\n{'='*60}")
-        print(f"Summary of {len(seeds)} Experiments (By Architecture)")
-        print(f"{'='*60}")
-        
         results_by_arch = {}
         for cpu in config["target_cpus"]:
             cpu_accs = [r[cpu]['accuracy'] for r in all_results]
+            cpu_precisions = [r[cpu]['precision'] for r in all_results]
+            cpu_recalls = [r[cpu]['recall'] for r in all_results]
             cpu_f1_micros = [r[cpu]['f1_micro'] for r in all_results]
             cpu_f1_macros = [r[cpu]['f1_macro'] for r in all_results]
             cpu_aucs = [r[cpu]['auc'] for r in all_results]
-            cpu_precisions = [r[cpu]['precision'] for r in all_results]
-            cpu_recalls = [r[cpu]['recall'] for r in all_results]
             cpu_test_samples = all_results[0][cpu]['test_samples']
             
             results_by_arch[cpu] = {
                 'avg_accuracy': np.mean(cpu_accs),
                 'std_accuracy': np.std(cpu_accs),
+                'avg_precision': np.mean(cpu_precisions),
+                'std_precision': np.std(cpu_precisions),
+                'avg_recall': np.mean(cpu_recalls),
+                'std_recall': np.std(cpu_recalls),
                 'avg_f1_micro': np.mean(cpu_f1_micros),
                 'std_f1_micro': np.std(cpu_f1_micros),
                 'avg_f1_macro': np.mean(cpu_f1_macros),
                 'std_f1_macro': np.std(cpu_f1_macros),
                 'avg_auc': np.mean(cpu_aucs),
                 'std_auc': np.std(cpu_aucs),
-                'avg_precision': np.mean(cpu_precisions),
-                'std_precision': np.std(cpu_precisions),
-                'avg_recall': np.mean(cpu_recalls),
-                'std_recall': np.std(cpu_recalls),
                 'test_samples': cpu_test_samples
             }
             
             print(f"\n{cpu}:")
             print(f"  Accuracy     : {results_by_arch[cpu]['avg_accuracy']:.4f} ± {results_by_arch[cpu]['std_accuracy']:.4f}")
+            print(f"  Precision    : {results_by_arch[cpu]['avg_precision']:.4f} ± {results_by_arch[cpu]['std_precision']:.4f}")
+            print(f"  Recall       : {results_by_arch[cpu]['avg_recall']:.4f} ± {results_by_arch[cpu]['std_recall']:.4f}")
             print(f"  F1-micro     : {results_by_arch[cpu]['avg_f1_micro']:.4f} ± {results_by_arch[cpu]['std_f1_micro']:.4f}")
             print(f"  F1-macro     : {results_by_arch[cpu]['avg_f1_macro']:.4f} ± {results_by_arch[cpu]['std_f1_macro']:.4f}")
             print(f"  AUC          : {results_by_arch[cpu]['avg_auc']:.4f} ± {results_by_arch[cpu]['std_auc']:.4f}")
-            print(f"  Precision    : {results_by_arch[cpu]['avg_precision']:.4f} ± {results_by_arch[cpu]['std_precision']:.4f}")
-            print(f"  Recall       : {results_by_arch[cpu]['avg_recall']:.4f} ± {results_by_arch[cpu]['std_recall']:.4f}")
-            print(f"  Test Samples : {results_by_arch[cpu]['test_samples']}")
         
         all_results_flat = []
         for seed, result_dict in zip(seeds, all_results):
             for cpu, metrics in result_dict.items():
                 all_results_flat.append({
                     'adapter_name': config_name,
-                    'pretrain_model_epoch': 25,
-                    'adapter_epochs': args.epoch,
+                    'adapter_epoch': args.epoch,
                     'loss_function': args.loss,
-                    'adapter_layers': args.layers,
                     'seed': seed,
                     'cpu': cpu,
                     'accuracy': metrics['accuracy'],
+                    'precision': metrics['precision'],
+                    'recall': metrics['recall'],
                     'f1_micro': metrics['f1_micro'],
                     'f1_macro': metrics['f1_macro'],
                     'auc': metrics['auc'],
-                    'precision': metrics['precision'],
-                    'recall': metrics['recall'],
                     'test_samples': metrics['test_samples']
                 })
         
         results_summary = {
             'adapter_name': config_name,
-            'pretrain_model_epoch': 25,
-            'adapter_epochs': args.epoch,
+            'adapter_epoch': args.epoch,
             'loss_function': args.loss,
-            'adapter_layers': args.layers,
             'mode': mode,
             'arch_mode': arch_mode,
             'source_cpus': config['source_cpus'],
@@ -275,90 +315,91 @@ def main():
         }
     else:
         overall_accs = [r['overall']['accuracy'] for r in all_results]
+        overall_precisions = [r['overall']['precision'] for r in all_results]
+        overall_recalls = [r['overall']['recall'] for r in all_results]
         overall_f1_micros = [r['overall']['f1_micro'] for r in all_results]
         overall_f1_macros = [r['overall']['f1_macro'] for r in all_results]
         overall_aucs = [r['overall']['auc'] for r in all_results]
-        overall_precisions = [r['overall']['precision'] for r in all_results]
-        overall_recalls = [r['overall']['recall'] for r in all_results]
         overall_test_samples = all_results[0]['overall']['test_samples']
         
         avg_acc = np.mean(overall_accs)
+        avg_precision = np.mean(overall_precisions)
+        avg_recall = np.mean(overall_recalls)
         avg_f1_micro = np.mean(overall_f1_micros)
         avg_f1_macro = np.mean(overall_f1_macros)
         avg_auc = np.mean(overall_aucs)
-        avg_precision = np.mean(overall_precisions)
-        avg_recall = np.mean(overall_recalls)
         std_acc = np.std(overall_accs)
+        std_precision = np.std(overall_precisions)
+        std_recall = np.std(overall_recalls)
         std_f1_micro = np.std(overall_f1_micros)
         std_f1_macro = np.std(overall_f1_macros)
         std_auc = np.std(overall_aucs)
-        std_precision = np.std(overall_precisions)
-        std_recall = np.std(overall_recalls)
         
         print(f"\n{len(seeds)} Experiments Summary:")
         print(f"Accuracy     : {avg_acc:.4f} ± {std_acc:.4f}")
+        print(f"Precision    : {avg_precision:.4f} ± {std_precision:.4f}")
+        print(f"Recall       : {avg_recall:.4f} ± {std_recall:.4f}")
         print(f"F1-micro     : {avg_f1_micro:.4f} ± {std_f1_micro:.4f}")
         print(f"F1-macro     : {avg_f1_macro:.4f} ± {std_f1_macro:.4f}")
         print(f"AUC          : {avg_auc:.4f} ± {std_auc:.4f}")
-        print(f"Precision    : {avg_precision:.4f} ± {std_precision:.4f}")
-        print(f"Recall       : {avg_recall:.4f} ± {std_recall:.4f}")
-        print(f"Test Samples : {overall_test_samples}")
         
         results_summary = {
             'adapter_name': config_name,
-            'pretrain_model_epoch': 25,
-            'adapter_epochs': args.epoch,
+            'adapter_epoch': args.epoch,
             'loss_function': args.loss,
-            'adapter_layers': args.layers,
             'mode': mode,
             'arch_mode': arch_mode,
             'source_cpus': config['source_cpus'],
             'target_cpus': config['target_cpus'],
             'avg_accuracy': avg_acc,
             'std_accuracy': std_acc,
+            'avg_precision': avg_precision,
+            'std_precision': std_precision,
+            'avg_recall': avg_recall,
+            'std_recall': std_recall,
             'avg_f1_micro': avg_f1_micro,
             'std_f1_micro': std_f1_micro,
             'avg_f1_macro': avg_f1_macro,
             'std_f1_macro': std_f1_macro,
             'avg_auc': avg_auc,
             'std_auc': std_auc,
-            'avg_precision': avg_precision,
-            'std_precision': std_precision,
-            'avg_recall': avg_recall,
-            'std_recall': std_recall,
             'test_samples': overall_test_samples,
             'seeds': seeds,
-            'all_results': [{'adapter_name': config_name,
-                           'pretrain_model_epoch': 25,
-                           'adapter_epochs': args.epoch,
-                           'loss_function': args.loss,
-                           'adapter_layers': args.layers,
-                           'seed': seed, 
-                           'accuracy': r['overall']['accuracy'], 
-                           'f1_micro': r['overall']['f1_micro'], 
-                           'f1_macro': r['overall']['f1_macro'],
-                           'auc': r['overall']['auc'],
-                           'precision': r['overall']['precision'],
-                           'recall': r['overall']['recall'],
-                           'test_samples': r['overall']['test_samples']} 
-                          for seed, r in zip(seeds, all_results)]
+            'all_results': [{
+                'adapter_name': config_name,
+                'adapter_epoch': args.epoch,
+                'loss_function': args.loss,
+                'seed': seed,
+                'accuracy': r['overall']['accuracy'],
+                'precision': r['overall']['precision'],
+                'recall': r['overall']['recall'],
+                'f1_micro': r['overall']['f1_micro'],
+                'f1_macro': r['overall']['f1_macro'],
+                'auc': r['overall']['auc'],
+                'test_samples': r['overall']['test_samples']
+            } for seed, r in zip(seeds, all_results)]
         }
     
-    save_dir = f"outputs/results/adapter_ablation/{config_name}"
+    # Save results
+    save_dir = f"{BASE_PATH}/outputs/results/{config_name}"
     os.makedirs(save_dir, exist_ok=True)
     
-    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
+    # Save detailed results as CSV
     if 'all_results' in results_summary:
         results_df = pd.DataFrame(results_summary['all_results'])
         results_df.to_csv(os.path.join(save_dir, f'results_{timestamp}.csv'), index=False)
     
+    # Save summary as JSON
     summary_data = {k: v for k, v in results_summary.items() if k != 'all_results'}
     with open(os.path.join(save_dir, f'summary_{timestamp}.json'), 'w') as f:
         json.dump(summary_data, f, indent=2)
     
-    print(f"\nResults saved with timestamp: {timestamp}")
-    print(f"Results directory: {save_dir}\n")
+    print(f"\n{'='*70}")
+    print(f"Results saved to: {save_dir}")
+    print(f"Timestamp: {timestamp}")
+    print(f"{'='*70}\n")
 
 if __name__ == "__main__":
     main()

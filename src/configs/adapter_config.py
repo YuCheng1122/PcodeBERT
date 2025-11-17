@@ -13,7 +13,7 @@ def get_adapter_config():
         "val_split": 0.2,  
         
         "batch_size": 64,
-        "learning_rate": 5e-5,
+        "learning_rate": 1e-5,
         "warmup_ratio": 0.1,
         "epochs": 30,
         "weight_decay": 0.01,
@@ -36,10 +36,17 @@ def get_adapter_config():
 def get_inference_config():
     return {
         "model_path": "/home/tommy/Project/PcodeBERT/outputs/models/RoBERTa/model_epoch_25",
+<<<<<<< HEAD
         "adapter_path": "/home/tommy/Project/PcodeBERT/outputs/models/Adapters/manual/model_epoch_25/epoch_30",
         "adapter_name": "pcode_adapter",
         "input_path": "/home/tommy/Project/PcodeBERT/outputs/data/GNN/gpickle_merged_adjusted_filtered",
         "output_path": "/home/tommy/Project/PcodeBERT/outputs/models/GNN/gpickle_merged_adjusted_filtered_epoch30_cosine",
+=======
+        "adapter_path": "/home/tommy/Project/PcodeBERT/outputs/models/Adapters/manual/model_epoch_25/epoch_5",
+        "adapter_name": "pcode_adapter",
+        "input_path": "/home/tommy/Project/PcodeBERT/outputs/data/GNN/gpickle_merged_adjusted_filtered",
+        "output_path": "/home/tommy/Project/PcodeBERT/outputs/data/GNN/gpickle_merged_adjusted_filtered_cosine_epoch5",
+>>>>>>> cc056ac5b2b4f41a1eb71d253cb6ebf75155470b
         "csv_path": "/home/tommy/Project/PcodeBERT/dataset/csv/merged_adjusted_filtered.csv",
         "target_cpus": ["x86_64", "ARM"],
         "batch_size": 64,
