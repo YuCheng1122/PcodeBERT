@@ -3,8 +3,8 @@ def get_gnn_config():
     
     config = {
         "classification": False,  
-        "source_cpus": ["x86_64"],     
-        "target_cpus": ["ARM"],
+        "source_cpus": ["ARM"],     
+        "target_cpus": ["x86_64"],
 
         "csv_path": f"{BASE_PATH}/dataset/csv/merged_adjusted_filtered.csv",
         "graph_dir": f"{BASE_PATH}/outputs/data/GNN/gpickle_merged_adjusted_filtered_cosine_epoch5",
