@@ -8,7 +8,7 @@ import os
 import argparse
 import json
 import pandas as pd
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from models.gnn_models import GCN
 from sklearn.metrics import classification_report
 
@@ -22,7 +22,7 @@ def set_random_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def run_experiment(seed, config, pretrain_epoch):
+def run_experiment(seed, config, model_name):
     set_random_seed(seed)
     
     train_losses = []
@@ -45,10 +45,8 @@ def run_experiment(seed, config, pretrain_epoch):
     
     device = torch.device(config["device"] if torch.cuda.is_available() else 'cpu')
     
-    # Create model save directory from config
     model_save_dir = config["model_output_dir"]
     os.makedirs(model_save_dir, exist_ok=True)
-    
 
     train_graphs, val_graphs, test_graphs, label_encoder, num_classes = load_cross_arch_data(
         csv_path=csv_path,
@@ -64,7 +62,10 @@ def run_experiment(seed, config, pretrain_epoch):
     val_loader = DataLoader(val_graphs, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_graphs, batch_size=batch_size, shuffle=False)
 
-    model = GCN(num_node_features=256, hidden_channels=hidden_channels, num_classes=num_classes).to(device)
+    # Get embedding dimension from first graph
+    embedding_dim = train_graphs[0].x.shape[1] if len(train_graphs) > 0 else 100
+    
+    model = GCN(num_node_features=embedding_dim, hidden_channels=hidden_channels, num_classes=num_classes).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = torch.nn.CrossEntropyLoss()
     
@@ -97,20 +98,18 @@ def run_experiment(seed, config, pretrain_epoch):
         if epoch % 10 == 0:
             print(f"[Epoch {epoch}] Val Accuracy = {val_accuracy:.4f}, Val Loss = {val_loss:.4f}")
 
-    # Save plots with pretrain_epoch in the filename
-    plots_dir = f"outputs/plots/epoch_{pretrain_epoch}"
+    plots_dir = f"outputs/plots/w2v_{model_name}"
     os.makedirs(plots_dir, exist_ok=True)
     plot_training_curves(train_losses, val_losses_list, test_losses_list, val_accuracies, seed, save_dir=plots_dir)
     
-    # Save model for this seed
     mode_str = "classification" if classification else "detection"
     arch_str = "_".join(source_cpus) if source_cpus else "default"
-    model_filename = f"gnn_model_{mode_str}_{arch_str}_epoch{pretrain_epoch}_seed_{seed}.pt"
+    model_filename = f"gnn_model_{mode_str}_{arch_str}_{model_name}_seed_{seed}.pt"
     model_path = os.path.join(model_save_dir, model_filename)
     
     torch.save({
         'seed': seed,
-        'pretrain_epoch': pretrain_epoch,
+        'model_name': model_name,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'config': config,
@@ -119,7 +118,8 @@ def run_experiment(seed, config, pretrain_epoch):
         'best_val_acc': best_val_acc,
         'train_losses': train_losses,
         'val_losses': val_losses_list,
-        'val_accuracies': val_accuracies
+        'val_accuracies': val_accuracies,
+        'embedding_dim': embedding_dim
     }, model_path)
     
     print(f"Model saved to: {model_path}")
@@ -151,9 +151,9 @@ def run_experiment(seed, config, pretrain_epoch):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='GNN training with specific pretrain epoch')
-    parser.add_argument('--epoch', type=int, required=True, choices=[25, 50, 100],
-                       help='Pretrain model epoch (25, 50, or 100)')
+    parser = argparse.ArgumentParser(description='GNN training with W2V embedding models')
+    parser.add_argument('--model', type=str, required=True, choices=['fasttext', 'cbow', 'skipgram'],
+                       help='Word2Vec model type (fasttext, cbow, or skipgram)')
     parser.add_argument('--source_cpus', nargs='+', default=["x86_64"],
                        help='Source CPU architectures for training')
     parser.add_argument('--target_cpus', nargs='+', default=["ARM", "PPC", "MIPS", "Intel"],
@@ -168,9 +168,9 @@ def main():
         "target_cpus": args.target_cpus,
 
         "csv_path": f"{BASE_PATH}/dataset/csv/merged_adjusted_filtered.csv",
-        "graph_dir": f"{BASE_PATH}/outputs/models/GNN/embeddings_epoch_{args.epoch}",
-        "cache_file": f"{BASE_PATH}/outputs/cache/gnn_data_epoch_{args.epoch}.pkl",
-        "model_output_dir": f"{BASE_PATH}/outputs/models/GNN/models_epoch_{args.epoch}",
+        "graph_dir": f"{BASE_PATH}/outputs/data/GNN/gpickle_merged_adjusted_filtered_{args.model}",
+        "cache_file": f"{BASE_PATH}/outputs/cache/gnn_data_{args.model}.pkl",
+        "model_output_dir": f"{BASE_PATH}/outputs/models/GNN/models_{args.model}",
         
         "batch_size": 32,
         "hidden_channels": 128,
@@ -184,11 +184,10 @@ def main():
     
     seeds = config["seeds"]
     
-    # 判斷模式
     mode = "Classification (family)" if config["classification"] else "Detection (label)"
     arch_mode = "單架構" if not config["target_cpus"] else "跨架構"
     
-    print(f"Pretrain Epoch: {args.epoch}")
+    print(f"W2V Model: {args.model}")
     print(f"模式: {mode}")
     print(f"架構模式: {arch_mode}")
     print(f"Training Architecture: {config['source_cpus']}")
@@ -201,7 +200,7 @@ def main():
 
     for i, seed in enumerate(seeds):
         print(f"\n=== Experiment {i+1}, Seed = {seed} ===")
-        results = run_experiment(seed, config, args.epoch)
+        results = run_experiment(seed, config, args.model)
         all_results.append(results)
 
     if config["target_cpus"]:
@@ -248,7 +247,7 @@ def main():
         for seed, result_dict in zip(seeds, all_results):
             for cpu, metrics in result_dict.items():
                 all_results_flat.append({
-                    'pretrain_epoch': args.epoch,
+                    'model_name': args.model,
                     'seed': seed,
                     'cpu': cpu,
                     'accuracy': metrics['accuracy'],
@@ -261,7 +260,7 @@ def main():
                 })
         
         results_summary = {
-            'pretrain_epoch': args.epoch,
+            'model_name': args.model,
             'mode': mode,
             'arch_mode': arch_mode,
             'source_cpus': config['source_cpus'],
@@ -302,7 +301,7 @@ def main():
         print(f"Test Samples : {overall_test_samples}")
         
         results_summary = {
-            'pretrain_epoch': args.epoch,
+            'model_name': args.model,
             'mode': mode,
             'arch_mode': arch_mode,
             'source_cpus': config['source_cpus'],
@@ -321,7 +320,7 @@ def main():
             'std_recall': std_recall,
             'test_samples': overall_test_samples,
             'seeds': seeds,
-            'all_results': [{'pretrain_epoch': args.epoch, 'seed': seed, 
+            'all_results': [{'model_name': args.model, 'seed': seed, 
                            'accuracy': r['overall']['accuracy'], 
                            'f1_micro': r['overall']['f1_micro'], 
                            'f1_macro': r['overall']['f1_macro'],
@@ -332,8 +331,7 @@ def main():
                           for seed, r in zip(seeds, all_results)]
         }
     
-    # Save results with epoch in filename
-    save_dir = f"outputs/results/epoch_{args.epoch}"
+    save_dir = f"outputs/results/w2v_{args.model}"
     os.makedirs(save_dir, exist_ok=True)
     
     timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
