@@ -9,7 +9,7 @@ import argparse
 import json
 import pandas as pd
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-from models.gnn_models import GCN
+from gnn_models import GCN
 from sklearn.metrics import classification_report
 
 def set_random_seed(seed):
@@ -63,7 +63,7 @@ def run_experiment(seed, config, model_name):
     test_loader = DataLoader(test_graphs, batch_size=batch_size, shuffle=False)
 
     # Get embedding dimension from first graph
-    embedding_dim = train_graphs[0].x.shape[1] if len(train_graphs) > 0 else 100
+    embedding_dim = train_graphs[0].x.shape[1] if len(train_graphs) > 0 else 200
     
     model = GCN(num_node_features=embedding_dim, hidden_channels=hidden_channels, num_classes=num_classes).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)

@@ -26,28 +26,28 @@ log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
-log "======================================"
-log "Starting W2V Experiments"
-log "======================================"
-log "Models: ${MODELS[@]}"
-log "Source CPU: $SOURCE_CPUS"
-log "Target CPUs: $TARGET_CPUS"
-log "Log file: $LOG_FILE"
-log ""
+# log "======================================"
+# log "Starting W2V Experiments"
+# log "======================================"
+# log "Models: ${MODELS[@]}"
+# log "Source CPU: $SOURCE_CPUS"
+# log "Target CPUs: $TARGET_CPUS"
+# log "Log file: $LOG_FILE"
+# log ""
 
-# Step 1: Generate embeddings for each W2V model
-log "======================================"
-log "Step 1: Generating Embeddings"
-log "======================================"
+# # Step 1: Generate embeddings for each W2V model
+# log "======================================"
+# log "Step 1: Generating Embeddings"
+# log "======================================"
 
-python experiment/src/embedding/batch_embedding_w2v.py 2>&1 | tee -a "$LOG_FILE"
+# python experiment/src/embedding/batch_embedding_w2v.py 2>&1 | tee -a "$LOG_FILE"
 
-if [ $? -eq 0 ]; then
-    log "✓ Successfully generated embeddings for all models"
-else
-    log "✗ Failed to generate embeddings"
-    exit 1
-fi
+# if [ $? -eq 0 ]; then
+#     log "✓ Successfully generated embeddings for all models"
+# else
+#     log "✗ Failed to generate embeddings"
+#     exit 1
+# fi
 
 log ""
 log "======================================"

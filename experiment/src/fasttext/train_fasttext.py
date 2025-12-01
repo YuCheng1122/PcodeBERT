@@ -52,12 +52,13 @@ for item in dataset:
 
 model = FastText(
     sentences=sentences,
-    vector_size=100,
+    vector_size=256,
     window=5,
-    min_count=1,
+    min_count=3,
     workers=4,
     sg=1,
-    epochs=5
+    epochs=5,
+    seed=42
 )
 
 model.save(output_path + 'fasttext_model.model')

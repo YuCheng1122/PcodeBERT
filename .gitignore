@@ -1,6 +1,8 @@
 **/reverse/
 **/document/
 **/Document/
+**/notebooks/
+**/src/configs/
 __pycache__/
 *.pyc
 .vscode/
