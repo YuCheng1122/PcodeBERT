@@ -53,12 +53,13 @@ for item in dataset:
 
 model = Word2Vec(
     sentences=sentences,
-    vector_size=100,
-    window=5,
-    min_count=1,
-    workers=4,
+    vector_size=256,
+    window=4,
+    min_count=3,
+    workers=48,
     sg=0,
-    epochs=5
+    epochs=5,
+    seed=42
 )
 
 model.save(output_path + 'cbow_model.model')
