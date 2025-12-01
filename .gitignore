@@ -10,7 +10,6 @@ __pycache__/
 .DS_Store
 .ipynb_checkpoints/
 data/processed/
-checkpoints/
 results/
 outputs/
 *tar.gz
